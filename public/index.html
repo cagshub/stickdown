@@ -265,7 +265,9 @@ function addChat(name, msg) {
     const box = document.getElementById('chatBox');
     const d = document.createElement('div');
     d.className = 'chat-msg';
-    d.innerHTML = `<span class="cn" style="color:#fa0">${name}:</span> ${msg}`;
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'cn'; nameSpan.style.color = '#fa0'; nameSpan.textContent = name + ':';
+    d.appendChild(nameSpan); d.appendChild(document.createTextNode(' ' + msg));
     box.appendChild(d);
     box.scrollTop = box.scrollHeight;
 }
@@ -327,12 +329,12 @@ ctx.imageSmoothingEnabled = true;
 
 const GV = 0.6, GROUND = 780;
 const WEAP = [
-    { name: 'Yumruk', range: 42, dmg: 6, speed: 8, color: '#fff', spName: 'Uppercut', spDmg: 14, spRange: 50, spCD: 30 },
-    { name: 'Kılıç', range: 78, dmg: 10, speed: 12, color: '#7bf', spName: 'Girdap', spDmg: 18, spRange: 95, spCD: 55 },
-    { name: 'Balta', range: 62, dmg: 15, speed: 18, color: '#f84', spName: 'Ezici Darbe', spDmg: 28, spRange: 70, spCD: 70 },
-    { name: 'Mızrak', range: 108, dmg: 8, speed: 13, color: '#8f8', spName: 'Şarj', spDmg: 20, spRange: 130, spCD: 60 },
-    { name: 'Çekiç', range: 58, dmg: 18, speed: 22, color: '#fa0', spName: 'Deprem', spDmg: 25, spRange: 160, spCD: 80 },
-    { name: 'Nunçaku', range: 52, dmg: 7, speed: 6, color: '#f6f', spName: 'Fırtına', spDmg: 22, spRange: 60, spCD: 40 }
+    { name: 'Yumruk', range: 42, dmg: 8, speed: 8, color: '#fff', spName: 'Uppercut', spDmg: 16, spRange: 50, spCD: 25 },
+    { name: 'Kılıç', range: 78, dmg: 11, speed: 12, color: '#7bf', spName: 'Girdap', spDmg: 20, spRange: 95, spCD: 50 },
+    { name: 'Balta', range: 62, dmg: 16, speed: 18, color: '#f84', spName: 'Ezici Darbe', spDmg: 30, spRange: 70, spCD: 65 },
+    { name: 'Mızrak', range: 108, dmg: 10, speed: 12, color: '#8f8', spName: 'Şarj', spDmg: 22, spRange: 130, spCD: 50 },
+    { name: 'Çekiç', range: 58, dmg: 18, speed: 20, color: '#fa0', spName: 'Deprem', spDmg: 28, spRange: 160, spCD: 70 },
+    { name: 'Nunçaku', range: 52, dmg: 6, speed: 9, color: '#f6f', spName: 'Fırtına', spDmg: 20, spRange: 60, spCD: 35 }
 ];
 
 // Harita tanımları
@@ -420,6 +422,11 @@ let gameOverText = '';
 let gameOverWinnerColor = '#f80';
 const KILL_LIMIT = 10;
 let respawnQueue = [];
+let dmgFlash = 0;
+const SPAWN_POINTS = [
+    { x: 200, y: 200 }, { x: 800, y: 200 }, { x: 1400, y: 200 },
+    { x: 400, y: 400 }, { x: 1200, y: 400 }, { x: 800, y: 500 },
+];
 
 function spark(x,y,col,n,spd){for(let i=0;i<n;i++){const a=Math.random()*Math.PI*2,s=Math.random()*spd+1;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-2,life:20+Math.random()*20,ml:40,color:col,size:2+Math.random()*4})}}
 function hitSpark(x,y){for(let i=0;i<10;i++){const a=Math.random()*Math.PI*2,s=3+Math.random()*6;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:12+Math.random()*10,ml:22,color:'#ff0',size:2+Math.random()*3,trail:true})}}
@@ -505,8 +512,11 @@ function startOnlineGame(data) {
 }
 
 // ========== NETWORK STATE SYNC ==========
+let _sendTick = 0;
 function sendState() {
     if (!localPlayer) return;
+    _sendTick++;
+    if (_sendTick % 2 !== 0) return; // 30Hz gönderim, bandwidth optimize
     socket.volatile.emit('state', {
         x: localPlayer.x,
         y: localPlayer.y,
@@ -591,13 +601,16 @@ socket.on('hit', data => {
     target.flash = 8;
     dmgNum(target.x, target.y - 40, dmg, target.blocking ? '#8af' : '#ff4');
 
+    // Hasar alınca ekran flash
+    if (target.isLocal && !target.blocking) { dmgFlash = 8; }
+
     if (target.hp <= 0 && !target.dead) {
         target.dead = true;
+        target._killedBy = data.attackerId; // kim öldürdü
         deathBurst(target.x, target.y - 15, target.color);
         screenShake = Math.max(screenShake, 12);
         if (attacker) attacker.kills++;
-        // Herkes respawn olur (oyuncular ve botlar)
-        respawnQueue.push({ fighter: target, timer: 60 }); // 1 saniye
+        respawnQueue.push({ fighter: target, timer: 60 });
         if (target.isLocal) socket.emit('died', { killerId: data.attackerId });
     }
 });
@@ -608,7 +621,7 @@ socket.on('playerDied', data => {
         f.dead = true;
         deathBurst(f.x, f.y - 15, f.color);
         screenShake = Math.max(screenShake, 12);
-        // Kill sayısı artırma YOK - zaten hit event'inde sayıldı
+        // Kill burada ARTIRMIYORUZ - hit event'inde zaten sayıldı
         respawnQueue.push({ fighter: f, timer: 60 });
     }
 });
@@ -643,7 +656,7 @@ function localAttackCheck() {
     const w = WEAP[localPlayer.wIdx];
 
     fighters.forEach(f => {
-        if (f === localPlayer || f.dead) return;
+        if (f === localPlayer || f.dead || f.invuln > 0) return;
         const dx = f.x - localPlayer.x;
         const dy = f.y - localPlayer.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -665,7 +678,7 @@ function localSpecialCheck() {
     const w = WEAP[localPlayer.wIdx];
 
     fighters.forEach(f => {
-        if (f === localPlayer || f.dead) return;
+        if (f === localPlayer || f.dead || f.invuln > 0) return;
         const dx = f.x - localPlayer.x;
         const dy = f.y - localPlayer.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -700,14 +713,20 @@ function localSpecialCheck() {
 function updateFighter(f) {
     if (f.dead) return;
 
-    // Remote players: sunucudan gelen pozisyona sürekli snap
+    // Remote players: hızlı interpolasyon (30Hz sync uyumlu)
     if (!f.isLocal && !f.isBot) {
         if (f._targetX !== undefined) {
-            f.x = f._targetX;
-            f.y = f._targetY;
+            const dx = f._targetX - f.x, dy = f._targetY - f.y;
+            if (Math.abs(dx) > 120 || Math.abs(dy) > 120) {
+                f.x = f._targetX; f.y = f._targetY;
+            } else {
+                f.x += dx * 0.45;
+                f.y += dy * 0.45;
+            }
         }
         if (f.flash > 0) f.flash--;
         if (f.stun > 0) f.stun--;
+        if (f.invuln > 0) f.invuln--;
         return;
     }
 
@@ -863,8 +882,10 @@ function handleInput() {
     else if (keys['arrowright']) { localPlayer.vx = spd; localPlayer.facing = 1; }
     if (jp['arrowup'] && localPlayer.jumpC < 2) { localPlayer.vy = localPlayer.jumpC === 0 ? -14 : -11; localPlayer.jumpC++; spark(localPlayer.x, localPlayer.y + 28, '#ff4', 4, 2); }
     if (keys['arrowdown'] && !localPlayer.grounded) localPlayer.vy += 0.7;
-    if (jp['q'] && !localPlayer.atk && !localPlayer.spAtk) { const w = WEAP[localPlayer.wIdx]; localPlayer.atk = true; localPlayer.atkT = w.speed; localPlayer.atkF = w.speed; localPlayer.atkHit = false; }
-    if (jp['w'] && !localPlayer.spAtk && !localPlayer.atk && localPlayer.spCD === 0) { const w = WEAP[localPlayer.wIdx]; localPlayer.spAtk = true; localPlayer.spT = w.speed + 10; localPlayer.spHit = false; localPlayer.spCD = w.spCD; }
+    if (localPlayer.invuln <= 0) {
+        if (jp['q'] && !localPlayer.atk && !localPlayer.spAtk) { const w = WEAP[localPlayer.wIdx]; localPlayer.atk = true; localPlayer.atkT = w.speed; localPlayer.atkF = w.speed; localPlayer.atkHit = false; }
+        if (jp['w'] && !localPlayer.spAtk && !localPlayer.atk && localPlayer.spCD === 0) { const w = WEAP[localPlayer.wIdx]; localPlayer.spAtk = true; localPlayer.spT = w.speed + 10; localPlayer.spHit = false; localPlayer.spCD = w.spCD; }
+    }
     if (jp['r']) { localPlayer.wIdx = (localPlayer.wIdx + 1) % WEAP.length; spark(localPlayer.x, localPlayer.y - 25, WEAP[localPlayer.wIdx].color, 8, 3); }
 }
 
@@ -907,6 +928,7 @@ function drawPlats() {
 function drawStick(f) {
     if (f.dead) return;
     ctx.save(); ctx.translate(f.x, f.y);
+    if (f.invuln > 0 && Math.floor(f.invuln / 3) % 2 === 0) ctx.globalAlpha = 0.35;
     const fl = f.flash > 0 && f.flash % 2 === 0;
     const col = fl ? '#fff' : f.color;
     const w = WEAP[f.wIdx];
@@ -1135,10 +1157,17 @@ function gameUpdate() {
             f.dead = false;
             f.hp = f.maxHp;
             f.stun = 0;
-            f.x = 200 + Math.random() * (W - 400);
-            f.y = 150;
+            // Güvenli spawn noktası seç (düşmanlardan en uzak)
+            let bestSpawn = SPAWN_POINTS[0], bestDist = 0;
+            SPAWN_POINTS.forEach(sp => {
+                let minDist = 9999;
+                fighters.forEach(o => { if (o !== f && !o.dead) { const d = Math.abs(o.x - sp.x) + Math.abs(o.y - sp.y); if (d < minDist) minDist = d; }});
+                if (minDist > bestDist) { bestDist = minDist; bestSpawn = sp; }
+            });
+            f.x = bestSpawn.x + (Math.random() - 0.5) * 60;
+            f.y = bestSpawn.y;
             f.vx = 0; f.vy = 0;
-            f.invuln = 0; // 0.5s kısa koruma
+            f.invuln = 18; // 0.3s kısa koruma (saldırı+hasar engelli)
             f._targetX = f.x;
             f._targetY = f.y;
             spark(f.x, f.y, '#fff', 15, 5);
@@ -1192,6 +1221,12 @@ function gameDraw() {
     fighters.forEach(f => { if (!f.isLocal) drawStick(f); });
     if (localPlayer) drawStick(localPlayer);
     drawHUD();
+    // Hasar flash overlay
+    if (dmgFlash > 0) {
+        ctx.fillStyle = `rgba(255,0,0,${dmgFlash * 0.04})`;
+        ctx.fillRect(0, 0, W, H);
+        dmgFlash--;
+    }
     ctx.restore();
 }
 

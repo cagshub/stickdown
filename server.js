@@ -146,12 +146,17 @@ io.on('connection', (socket) => {
     // Hit event (player hit another player)
     socket.on('hit', (data) => {
         if (!currentRoom) return;
+        // Server-side hasar validation: max 30 normal, max 50 special
+        const maxDmg = data.special ? 50 : 30;
+        const dmg = Math.min(Math.max(0, Math.floor(data.damage || 0)), maxDmg);
+        const kx = Math.max(-15, Math.min(15, data.knockX || 0));
+        const ky = Math.max(-15, Math.min(5, data.knockY || 0));
         io.to(currentRoom).emit('hit', {
             attackerId: data.botAttacker || socket.id,
             targetId: data.targetId,
-            damage: data.damage,
-            knockX: data.knockX,
-            knockY: data.knockY,
+            damage: dmg,
+            knockX: kx,
+            knockY: ky,
             special: data.special || false
         });
     });
