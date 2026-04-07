@@ -1018,26 +1018,30 @@ function gameDraw() {
     ctx.restore();
 }
 
-// Fixed timestep: oyun herkeste aynı hızda çalışır (60fps sabit)
-const TICK_RATE = 1000 / 60; // 16.67ms per tick
+// Fixed timestep: herkes 60 tick/s, FPS fark etmez
+const TICK_MS = 1000 / 60;
 let lastTime = performance.now();
-let accumulator = 0;
+let accum = 0;
 
 function gameLoop(now) {
-    const delta = now - lastTime;
+    let delta = now - lastTime;
     lastTime = now;
-    accumulator += delta;
+    // Tab arka plana giderse patlamasın
+    if (delta > 200) delta = TICK_MS;
+    accum += delta;
 
-    // Sabit 60fps tick - FPS ne olursa olsun aynı hız
-    while (accumulator >= TICK_RATE) {
+    // Sabit 60 tick/s fizik - herkes eşit
+    let ticked = false;
+    while (accum >= TICK_MS) {
         if (gameRunning) gameUpdate();
         for (const k in jp) delete jp[k];
-        accumulator -= TICK_RATE;
+        accum -= TICK_MS;
+        ticked = true;
+        // Çok geride kalmışsa sıfırla (düşük FPS koruması)
+        if (accum > TICK_MS * 4) { accum = 0; break; }
     }
 
-    // Render her frame
     if (gameRunning) gameDraw();
-
     requestAnimationFrame(gameLoop);
 }
 
