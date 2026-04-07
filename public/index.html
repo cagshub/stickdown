@@ -7,7 +7,7 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#0a0a0a;display:flex;justify-content:center;align-items:center;height:100vh;font-family:'Segoe UI',sans-serif;overflow:hidden;color:#fff}
-canvas{border-radius:4px;display:none;width:100vw;height:100vh}
+canvas{display:none;width:100vw;height:100vh;image-rendering:auto}
 #ui{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
 #ui>*{pointer-events:all}
 .screen{display:none;flex-direction:column;align-items:center;gap:12px;padding:30px;border-radius:12px;background:rgba(10,5,20,0.95);border:1px solid #333;max-width:700px;width:90%}
@@ -301,12 +301,13 @@ socket.on('gameStart', data => {
 // =====================================================
 // ==================== GAME ENGINE ====================
 // =====================================================
-const W = 1200, H = 700;
+const W = 1600, H = 900;
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 canvas.width = W; canvas.height = H;
+ctx.imageSmoothingEnabled = true;
 
-const GV = 0.6, GROUND = 590;
+const GV = 0.6, GROUND = 780;
 const WEAP = [
     { name: 'Yumruk', range: 42, dmg: 6, speed: 8, color: '#fff', spName: 'Uppercut', spDmg: 14, spRange: 50, spCD: 30 },
     { name: 'Kılıç', range: 78, dmg: 10, speed: 12, color: '#7bf', spName: 'Girdap', spDmg: 18, spRange: 95, spCD: 55 },
@@ -317,13 +318,15 @@ const WEAP = [
 ];
 
 const platforms = [
-    { x: 0, y: GROUND, w: W, h: 110 },
-    { x: 80, y: 475, w: 200, h: 14 },
-    { x: 500, y: 410, w: 200, h: 14 },
-    { x: 920, y: 475, w: 200, h: 14 },
-    { x: 280, y: 330, w: 160, h: 14 },
-    { x: 760, y: 330, w: 160, h: 14 },
-    { x: 510, y: 240, w: 180, h: 14 },
+    { x: 0, y: GROUND, w: W, h: 120 },
+    { x: 100, y: 620, w: 240, h: 16 },
+    { x: 680, y: 540, w: 240, h: 16 },
+    { x: 1260, y: 620, w: 240, h: 16 },
+    { x: 350, y: 430, w: 200, h: 16 },
+    { x: 1050, y: 430, w: 200, h: 16 },
+    { x: 680, y: 320, w: 240, h: 16 },
+    { x: 200, y: 240, w: 180, h: 16 },
+    { x: 1220, y: 240, w: 180, h: 16 },
 ];
 
 const keys = {}, jp = {};
@@ -410,7 +413,7 @@ function startOnlineGame(data) {
     const bCount = data.botCount || 0;
     for (let i = 0; i < bCount; i++) {
         const botHp = [70, 100, 150][data.botDiff || 1];
-        const b = createFighter(200 + Math.random() * 800, 200, botColors[i % 10], botHp, Math.floor(Math.random() * 6), botNames[i % 10], false);
+        const b = createFighter(200 + Math.random() * (W - 400), 200, botColors[i % 10], botHp, Math.floor(Math.random() * 6), botNames[i % 10], false);
         b.isBot = true;
         b.ai = createAI(data.botDiff || 1);
         b.netId = 'bot_' + i;
@@ -511,10 +514,8 @@ socket.on('hit', data => {
         deathBurst(target.x, target.y - 15, target.color);
         screenShake = Math.max(screenShake, 12);
         if (attacker) attacker.kills++;
-        // Respawn queue
-        if (!target.isBot) {
-            respawnQueue.push({ fighter: target, timer: 60 }); // 1 saniye
-        }
+        // Herkes respawn olur (oyuncular ve botlar)
+        respawnQueue.push({ fighter: target, timer: 60 }); // 1 saniye
         if (target.isLocal) socket.emit('died', { killerId: data.attackerId });
     }
 });
@@ -526,9 +527,7 @@ socket.on('playerDied', data => {
         deathBurst(f.x, f.y - 15, f.color);
         screenShake = Math.max(screenShake, 12);
         // Kill sayısı artırma YOK - zaten hit event'inde sayıldı
-        if (!f.isBot) {
-            respawnQueue.push({ fighter: f, timer: 60 });
-        }
+        respawnQueue.push({ fighter: f, timer: 60 });
     }
 });
 
@@ -707,7 +706,7 @@ function botAttackCheck(bot) {
         const dx = f.x - bot.x, dist = Math.sqrt(dx * dx + (f.y - bot.y) ** 2);
         const facing = bot.facing === 1 ? dx > -25 : dx < 25;
         if (dist < w.range + 22 && facing) {
-            socket.emit('hit', { targetId: f.netId, damage: w.dmg, knockX: bot.facing * 4, knockY: -2 });
+            socket.emit('hit', { targetId: f.netId, damage: w.dmg, knockX: bot.facing * 4, knockY: -2, botAttacker: bot.netId });
         }
     });
 }
@@ -725,7 +724,7 @@ function botSpecialCheck(bot) {
             if (w.spName === 'Uppercut') ky = -13;
             if (w.spName === 'Şarj') kx = bot.facing * 10;
             if (w.spName === 'Deprem') ky = -9;
-            socket.emit('hit', { targetId: f.netId, damage: w.spDmg, knockX: kx, knockY: ky, special: true });
+            socket.emit('hit', { targetId: f.netId, damage: w.spDmg, knockX: kx, knockY: ky, special: true, botAttacker: bot.netId });
         }
     });
 }
@@ -798,7 +797,7 @@ function drawBG() {
     for (let i = 0; i < H; i += 60) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(W, i); ctx.stroke(); }
     ctx.fillStyle = 'rgba(30,20,40,0.85)';
     for (let i = 0; i < W; i += 17) { ctx.beginPath(); ctx.arc(i, 82 + Math.sin(i * 0.5 + Date.now() * 0.002) * 4, 8, Math.PI, 0); ctx.fill(); }
-    ctx.save(); ctx.globalAlpha = 0.06; ctx.font = 'bold 90px Segoe UI'; ctx.textAlign = 'center'; ctx.fillStyle = '#f60'; ctx.fillText('STICKDOWN ARENA', 600, 160); ctx.restore();
+    ctx.save(); ctx.globalAlpha = 0.06; ctx.font = 'bold 120px Segoe UI'; ctx.textAlign = 'center'; ctx.fillStyle = '#f60'; ctx.fillText('STICKDOWN ARENA', W / 2, 180); ctx.restore();
 }
 
 function drawPlats() {
@@ -814,7 +813,7 @@ function drawPlats() {
             ctx.strokeStyle = 'rgba(255,100,0,0.25)'; ctx.lineWidth = 1; ctx.strokeRect(p.x, p.y, p.w, p.h);
         }
     });
-    ctx.strokeStyle = 'rgba(255,60,0,0.15)'; ctx.lineWidth = 3; ctx.strokeRect(5, 95, W - 10, GROUND - 90);
+    ctx.strokeStyle = 'rgba(255,60,0,0.15)'; ctx.lineWidth = 3; ctx.strokeRect(5, 95, W - 10, GROUND - 95);
 }
 
 function drawStick(f) {
@@ -912,31 +911,55 @@ function drawParticles() {
 }
 
 function drawHUD() {
-    // All player HP bars at top
-    const sorted = [...fighters].filter(f => !f.isBot).sort((a, b) => b.kills - a.kills);
-    const barW = Math.min(200, (W - 40) / sorted.length - 10);
-
+    // Skor tablosu - sağ üst (tüm oyuncular + botlar)
+    const sorted = [...fighters].sort((a, b) => b.kills - a.kills);
+    const sbX = W - 220, sbY = 10;
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(sbX, sbY, 210, 30 + sorted.length * 24);
+    ctx.strokeStyle = 'rgba(255,100,0,0.3)'; ctx.lineWidth = 1;
+    ctx.strokeRect(sbX, sbY, 210, 30 + sorted.length * 24);
+    ctx.font = 'bold 13px Segoe UI'; ctx.fillStyle = '#888'; ctx.textAlign = 'left';
+    ctx.fillText('SKOR TABLOSU', sbX + 10, sbY + 18);
     sorted.forEach((f, i) => {
-        const bx = 20 + i * (barW + 10), by = 12;
-        ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(bx, by, barW + 4, 22);
-        ctx.fillStyle = '#222'; ctx.fillRect(bx + 2, by + 2, barW, 18);
-        const pct = f.dead ? 0 : f.hp / f.maxHp;
-        ctx.fillStyle = f.color; ctx.fillRect(bx + 2, by + 2, barW * pct, 18);
-        ctx.font = 'bold 10px Segoe UI'; ctx.fillStyle = '#fff'; ctx.textAlign = 'left';
-        ctx.fillText(`${f.name} ${f.kills}/${KILL_LIMIT}${f.dead ? ' ✗' : ''}`, bx + 5, by + 15);
+        const fy = sbY + 36 + i * 24;
+        // Kill bar
+        ctx.fillStyle = 'rgba(255,255,255,0.05)';
+        ctx.fillRect(sbX + 5, fy - 12, 200, 20);
+        ctx.fillStyle = f.color + '44';
+        ctx.fillRect(sbX + 5, fy - 12, 200 * Math.min(1, f.kills / KILL_LIMIT), 20);
+        // Text
+        ctx.font = (f.isLocal ? 'bold ' : '') + '13px Segoe UI';
+        ctx.fillStyle = f.dead ? '#666' : f.color;
+        ctx.textAlign = 'left';
+        ctx.fillText(`${f.isBot ? '🤖 ' : ''}${f.name}`, sbX + 10, fy + 2);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#fff';
+        ctx.fillText(`${f.kills}/${KILL_LIMIT}`, sbX + 200, fy + 2);
     });
 
-    // Local weapon info
-    if (localPlayer && !localPlayer.dead) {
-        const cw = WEAP[localPlayer.wIdx];
-        ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(20, 42, 200, 18);
-        ctx.fillStyle = cw.color; ctx.font = 'bold 11px Segoe UI'; ctx.textAlign = 'left';
-        ctx.fillText(`${WEAPONS[localPlayer.wIdx].icon} ${cw.name} | Özel: ${cw.spName}`, 25, 55);
-        if (localPlayer.spCD > 0) {
-            ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fillRect(22, 63, 80, 3);
-            ctx.fillStyle = '#fa0'; ctx.fillRect(22, 63, 80 * (1 - localPlayer.spCD / cw.spCD), 3);
-        } else {
-            ctx.fillStyle = '#0f0'; ctx.font = '10px Segoe UI'; ctx.fillText('● ÖZEL HAZIR [W]', 22, 73);
+    // Kendi HP barı - sol alt
+    if (localPlayer) {
+        const hbX = 20, hbY = H - 70;
+        ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(hbX, hbY, 300, 55);
+        ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.strokeRect(hbX, hbY, 300, 55);
+        // HP bar
+        ctx.fillStyle = '#333'; ctx.fillRect(hbX + 10, hbY + 8, 280, 18);
+        const pct = localPlayer.dead ? 0 : localPlayer.hp / localPlayer.maxHp;
+        const hpCol = pct > 0.5 ? '#4f4' : pct > 0.25 ? '#fa0' : '#f44';
+        ctx.fillStyle = hpCol; ctx.fillRect(hbX + 10, hbY + 8, 280 * pct, 18);
+        ctx.font = 'bold 13px Segoe UI'; ctx.fillStyle = '#fff'; ctx.textAlign = 'left';
+        ctx.fillText(localPlayer.dead ? 'ÖLÜM' : `HP: ${localPlayer.hp}/${localPlayer.maxHp}`, hbX + 15, hbY + 22);
+        // Weapon + cooldown
+        if (!localPlayer.dead) {
+            const cw = WEAP[localPlayer.wIdx];
+            ctx.fillStyle = cw.color; ctx.font = 'bold 12px Segoe UI';
+            ctx.fillText(`${WEAPONS[localPlayer.wIdx].icon} ${cw.name} | Özel: ${cw.spName}`, hbX + 10, hbY + 42);
+            if (localPlayer.spCD > 0) {
+                ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(hbX + 10, hbY + 48, 120, 4);
+                ctx.fillStyle = '#fa0'; ctx.fillRect(hbX + 10, hbY + 48, 120 * (1 - localPlayer.spCD / cw.spCD), 4);
+            } else {
+                ctx.fillStyle = '#0f0'; ctx.font = '11px Segoe UI'; ctx.fillText('● ÖZEL HAZIR [W]', hbX + 140, hbY + 42);
+            }
         }
     }
 
@@ -944,48 +967,45 @@ function drawHUD() {
     if (localPlayer && localPlayer.dead) {
         const rq = respawnQueue.find(r => r.fighter === localPlayer);
         if (rq) {
-            ctx.textAlign = 'center'; ctx.font = 'bold 28px Segoe UI'; ctx.fillStyle = '#f44';
-            ctx.fillText(`ÖLDÜN! Respawn: ${Math.ceil(rq.timer / 60)}s`, 600, 350);
+            ctx.textAlign = 'center'; ctx.font = 'bold 36px Segoe UI'; ctx.fillStyle = '#f44';
+            ctx.fillText(`ÖLDÜN! Respawn: ${Math.ceil(rq.timer / 60)}s`, W / 2, H / 2);
         }
     }
 
-    // Kill limit progress (center top)
-    ctx.textAlign = 'center'; ctx.font = 'bold 16px Segoe UI'; ctx.fillStyle = '#fa0';
-    ctx.fillText(`${KILL_LIMIT} KILL KAZANIR`, 600, 28);
-    // Leader indicator
-    const leader = [...fighters].filter(f => !f.isBot).sort((a, b) => b.kills - a.kills)[0];
+    // Kill limit - üst orta
+    ctx.textAlign = 'center'; ctx.font = 'bold 20px Segoe UI'; ctx.fillStyle = '#fa0';
+    ctx.fillText(`${KILL_LIMIT} KILL KAZANIR`, W / 2, 30);
+    const leader = [...fighters].sort((a, b) => b.kills - a.kills)[0];
     if (leader && leader.kills > 0) {
-        ctx.font = '12px Segoe UI'; ctx.fillStyle = leader.color;
-        ctx.fillText(`Lider: ${leader.name} (${leader.kills}/${KILL_LIMIT})`, 600, 44);
+        ctx.font = '14px Segoe UI'; ctx.fillStyle = leader.color;
+        ctx.fillText(`Lider: ${leader.name} (${leader.kills}/${KILL_LIMIT})`, W / 2, 52);
     }
 
-    // Room code
-    ctx.textAlign = 'right'; ctx.font = 'bold 14px Segoe UI'; ctx.fillStyle = '#555';
-    ctx.fillText(`ODA: ${roomCode}`, W - 20, H - 15);
-
-    // Controls
-    ctx.textAlign = 'center'; ctx.font = '11px Segoe UI'; ctx.fillStyle = 'rgba(255,255,255,0.2)';
-    ctx.fillText('Ok Tuşları: Hareket | Q: Saldırı | W: Özel | R: Silah | E: Savunma', 500, H - 10);
+    // Oda kodu + kontroller
+    ctx.textAlign = 'right'; ctx.font = '13px Segoe UI'; ctx.fillStyle = '#444';
+    ctx.fillText(`ODA: ${roomCode}`, W - 20, H - 8);
+    ctx.textAlign = 'center'; ctx.font = '12px Segoe UI'; ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.fillText('Ok Tuşları: Hareket | Q: Saldırı | W: Özel | R: Silah | E: Savunma', W / 2, H - 8);
 
     // Game over screen
     if (gameOverTimer !== 0) {
-        ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(0, 180, W, 340);
+        ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(0, 150, W, 500);
         ctx.textAlign = 'center';
 
         // Winner name
         ctx.font = 'bold 56px Segoe UI'; ctx.fillStyle = gameOverWinnerColor;
         ctx.shadowColor = gameOverWinnerColor; ctx.shadowBlur = 25;
-        ctx.fillText(`${gameOverText} KAZANDI!`, 600, 270);
+        ctx.fillText(`${gameOverText} KAZANDI!`, W/2, 270);
         ctx.shadowBlur = 0;
 
         // Scoreboard
         const sorted = [...fighters].sort((a, b) => b.kills - a.kills);
         ctx.font = 'bold 14px Segoe UI'; ctx.fillStyle = '#888';
-        ctx.fillText('SKOR TABLOSU', 600, 310);
+        ctx.fillText('SKOR TABLOSU', W/2, 310);
         sorted.forEach((f, i) => {
             ctx.font = i === 0 ? 'bold 18px Segoe UI' : '15px Segoe UI';
             ctx.fillStyle = f.color;
-            ctx.fillText(`${i + 1}. ${f.name} — ${f.kills} kill`, 600, 340 + i * 26);
+            ctx.fillText(`${i + 1}. ${f.name} — ${f.kills} kill`, W/2, 340 + i * 26);
         });
 
         // Restart / lobby
@@ -994,13 +1014,13 @@ function drawHUD() {
             const pulse = 0.7 + Math.sin(Date.now() * 0.004) * 0.3;
             ctx.globalAlpha = pulse;
             ctx.font = 'bold 22px Segoe UI'; ctx.fillStyle = '#4f4';
-            ctx.fillText('ENTER: Yeniden Başlat', 600, bottomY);
+            ctx.fillText('ENTER: Yeniden Başlat', W/2, bottomY);
             ctx.fillStyle = '#f44'; ctx.font = '16px Segoe UI';
-            ctx.fillText('ESC: Lobiye Dön', 600, bottomY + 30);
+            ctx.fillText('ESC: Lobiye Dön', W/2, bottomY + 30);
             ctx.globalAlpha = 1;
         } else {
             ctx.font = '18px Segoe UI'; ctx.fillStyle = '#888';
-            ctx.fillText('Host yeniden başlatacak...', 600, bottomY);
+            ctx.fillText('Host yeniden başlatacak...', W/2, bottomY);
         }
     }
 }

@@ -109,9 +109,9 @@ io.on('connection', (socket) => {
 
         // Assign spawn positions
         const spawns = [];
-        const spacing = 900 / (room.players.length + 1);
+        const spacing = 1200 / (room.players.length + 1);
         for (let i = 0; i < room.players.length; i++) {
-            spawns.push({ x: 150 + spacing * (i + 1), y: 200 });
+            spawns.push({ x: 200 + spacing * (i + 1), y: 200 });
         }
 
         const playerData = room.players.map((p, i) => ({
@@ -145,7 +145,7 @@ io.on('connection', (socket) => {
     socket.on('hit', (data) => {
         if (!currentRoom) return;
         io.to(currentRoom).emit('hit', {
-            attackerId: socket.id,
+            attackerId: data.botAttacker || socket.id,
             targetId: data.targetId,
             damage: data.damage,
             knockX: data.knockX,
