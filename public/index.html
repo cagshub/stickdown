@@ -372,7 +372,7 @@ let sendTimer = 0;
 function sendState() {
     if (!localPlayer) return;
     sendTimer++;
-    if (sendTimer % 2 !== 0) return; // ~30fps send rate
+    if (sendTimer % 2 !== 0) return; // ~30fps
     socket.emit('state', {
         x: Math.round(localPlayer.x),
         y: Math.round(localPlayer.y),
@@ -561,17 +561,11 @@ function localSpecialCheck() {
 function updateFighter(f) {
     if (f.dead) return;
 
-    // Remote players: fast interpolation
+    // Remote players: direkt pozisyon ata, gecikme yok
     if (!f.isLocal && !f.isBot) {
         if (f._targetX !== undefined) {
-            const dx = f._targetX - f.x, dy = f._targetY - f.y;
-            // Eğer çok uzaktaysa anında ışınla, değilse hızlı takip
-            if (Math.abs(dx) > 150 || Math.abs(dy) > 150) {
-                f.x = f._targetX; f.y = f._targetY;
-            } else {
-                f.x += dx * 0.5;
-                f.y += dy * 0.5;
-            }
+            f.x = f._targetX;
+            f.y = f._targetY;
         }
         if (f.flash > 0) f.flash--;
         if (f.stun > 0) f.stun--;
