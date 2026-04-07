@@ -7,7 +7,7 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#0a0a0a;display:flex;justify-content:center;align-items:center;height:100vh;font-family:'Segoe UI',sans-serif;overflow:hidden;color:#fff}
-canvas{border-radius:4px;display:none}
+canvas{border-radius:4px;display:none;width:100vw;height:100vh}
 #ui{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
 #ui>*{pointer-events:all}
 .screen{display:none;flex-direction:column;align-items:center;gap:12px;padding:30px;border-radius:12px;background:rgba(10,5,20,0.95);border:1px solid #333;max-width:700px;width:90%}
@@ -89,6 +89,12 @@ input[type=text].name-input{letter-spacing:0;width:200px;font-size:16px}
     <div class="room-code" id="lobbyCode">-----</div>
     <p class="info">Bu kodu arkadaşlarına gönder!</p>
     <div class="player-list" id="lobbyPlayers"></div>
+    <div id="botSettings" style="display:none;text-align:center;margin:8px 0">
+        <label style="color:#aaa;font-size:14px">Bot Sayısı: </label>
+        <button class="btn secondary" style="padding:4px 12px;font-size:16px" onclick="changeBots(-1)">−</button>
+        <span id="botCountLabel" style="font-size:20px;font-weight:bold;color:#fa0;margin:0 12px">0</span>
+        <button class="btn secondary" style="padding:4px 12px;font-size:16px" onclick="changeBots(1)">+</button>
+    </div>
     <div class="chat-box" id="chatBox"></div>
     <input type="text" id="chatInput" placeholder="Mesaj yaz... (Enter)" maxlength="100">
     <div style="display:flex;gap:10px">
@@ -108,6 +114,7 @@ let myWeapon = 0;
 let isHost = false;
 let roomCode = '';
 let lobbyPlayers = [];
+let botCount = 0;
 
 socket.on('connect', () => { myId = socket.id; });
 
@@ -191,7 +198,12 @@ function doJoinRoom() {
     socket.emit('joinRoom', { code, name: myName, weaponIdx: myWeapon });
 }
 function doLeave() { location.reload(); }
-function doStart() { socket.emit('startGame'); }
+function doStart() { socket.emit('startGame', { botCount }); }
+
+function changeBots(delta) {
+    botCount = Math.max(0, Math.min(10, botCount + delta));
+    document.getElementById('botCountLabel').textContent = botCount;
+}
 
 function updateLobbyUI() {
     document.getElementById('lobbyCode').textContent = roomCode;
@@ -201,6 +213,7 @@ function updateLobbyUI() {
         `<span class="player-tag" style="background:${colors[i]};color:#000">${p.name} [${WEAPONS[p.weaponIdx]?.icon || '?'}]${p.id === myId ? ' (Sen)' : ''}</span>`
     ).join('');
     document.getElementById('startBtn').style.display = isHost ? 'inline-block' : 'none';
+    document.getElementById('botSettings').style.display = isHost ? 'block' : 'none';
 }
 
 // Chat
@@ -354,7 +367,7 @@ function startOnlineGame(data) {
     gameOverText = '';
     roundInfo = data;
 
-    // Create only real players - no bots
+    // Real players
     data.players.forEach(p => {
         const f = createFighter(p.spawnX, p.spawnY, p.color, 150, p.weaponIdx, p.name, p.id === myId);
         f.netId = p.id;
@@ -365,6 +378,19 @@ function startOnlineGame(data) {
             remotePlayers[p.id] = f;
         }
     });
+
+    // Bots (host manages)
+    const botNames = ['Gölge','Ateş','Buz','Fırtına','Kaya','Demir','Kurt','Şimşek','Alev','Panter'];
+    const botColors = ['#888','#aa6','#6a8','#a6a','#8a6','#6aa','#a88','#8aa','#aa8','#88a'];
+    const bCount = data.botCount || 0;
+    for (let i = 0; i < bCount; i++) {
+        const b = createFighter(200 + Math.random() * 800, 200, botColors[i % 10], 100, Math.floor(Math.random() * 6), botNames[i % 10], false);
+        b.isBot = true;
+        b.ai = createAI(3);
+        b.netId = 'bot_' + i;
+        fighters.push(b);
+        botFighters.push(b);
+    }
 }
 
 // ========== NETWORK STATE SYNC ==========
@@ -388,6 +414,21 @@ function sendState() {
         kills: localPlayer.kills
     });
 
+    // Host sends bot states
+    if (isHost) {
+        botFighters.forEach(b => {
+            if (b.dead) return;
+            socket.volatile.emit('state', {
+                id: b.netId,
+                x: b.x, y: b.y,
+                facing: b.facing, hp: b.hp, wIdx: b.wIdx,
+                atk: b.atk, atkT: b.atkT, atkF: b.atkF,
+                spAtk: b.spAtk, spT: b.spT,
+                blocking: b.blocking, dead: b.dead,
+                walkC: b.walkC, grounded: b.grounded, kills: b.kills
+            });
+        });
+    }
 }
 
 // Receive remote state
@@ -458,8 +499,7 @@ socket.on('playerDied', data => {
         f.dead = true;
         deathBurst(f.x, f.y - 15, f.color);
         screenShake = Math.max(screenShake, 12);
-        const killer = fighters.find(ff => ff.netId === data.killerId);
-        if (killer) killer.kills++;
+        // Kill sayısı artırma YOK - zaten hit event'inde sayıldı
         if (!f.isBot) {
             respawnQueue.push({ fighter: f, timer: 60 });
         }
@@ -947,6 +987,9 @@ function gameUpdate() {
 
     // Update all fighters
     fighters.forEach(f => updateFighter(f));
+
+    // Bot AI (host only)
+    if (isHost) botFighters.forEach(b => { if (!b.dead) aiUpdate(b); });
 
     sendState();
 

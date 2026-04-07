@@ -96,14 +96,15 @@ io.on('connection', (socket) => {
     });
 
     // Start game (host only)
-    socket.on('startGame', () => {
+    socket.on('startGame', (data) => {
         if (!currentRoom) return;
         const room = rooms.get(currentRoom);
         if (!room || room.host !== socket.id) return;
-        if (room.players.length < 2) { socket.emit('joinError', 'En az 2 oyuncu gerekli!'); return; }
+        if (room.players.length < 1) { socket.emit('joinError', 'En az 1 oyuncu gerekli!'); return; }
 
         room.state = 'playing';
         room.roundNum++;
+        if (data && data.botCount !== undefined) room.botCount = data.botCount;
 
         // Assign spawn positions
         const spawns = [];
@@ -123,7 +124,8 @@ io.on('connection', (socket) => {
 
         io.to(currentRoom).emit('gameStart', {
             players: playerData,
-            roundNum: room.roundNum
+            roundNum: room.roundNum,
+            botCount: room.botCount || 0
         });
         console.log(`Room ${currentRoom} game started (round ${room.roundNum})`);
     });
