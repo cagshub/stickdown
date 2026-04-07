@@ -274,7 +274,7 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 canvas.width = W; canvas.height = H;
 
-const GV = 0.5, GROUND = 590;
+const GV = 0.6, GROUND = 590;
 const WEAP = [
     { name: 'Yumruk', range: 42, dmg: 6, speed: 8, color: '#fff', spName: 'Uppercut', spDmg: 14, spRange: 50, spCD: 30 },
     { name: 'Kılıç', range: 78, dmg: 10, speed: 12, color: '#7bf', spName: 'Girdap', spDmg: 18, spRange: 95, spCD: 55 },
@@ -569,7 +569,7 @@ function updateFighter(f) {
     if (f.flash > 0) f.flash--;
     if (f.invuln > 0) f.invuln--;
     if (f.stun > 0) { f.stun--; f.vx *= 0.88; }
-    else if (!f.blocking) { f.vx *= f.grounded ? 0.72 : 0.95; }
+    else if (!f.blocking) { f.vx *= f.grounded ? 0.82 : 0.97; }
     else { f.vx *= 0.55; }
 
     if (f.atk) {
@@ -711,10 +711,10 @@ function handleInput() {
     if (!localPlayer || localPlayer.dead || localPlayer.stun > 0) return;
     localPlayer.blocking = keys['e'] && localPlayer.grounded;
     if (localPlayer.blocking) return;
-    const spd = localPlayer.grounded ? 6 : 4;
+    const spd = localPlayer.grounded ? 8 : 5.5;
     if (keys['arrowleft']) { localPlayer.vx = -spd; localPlayer.facing = -1; }
     else if (keys['arrowright']) { localPlayer.vx = spd; localPlayer.facing = 1; }
-    if (jp['arrowup'] && localPlayer.jumpC < 2) { localPlayer.vy = localPlayer.jumpC === 0 ? -12 : -10; localPlayer.jumpC++; spark(localPlayer.x, localPlayer.y + 28, '#ff4', 4, 2); }
+    if (jp['arrowup'] && localPlayer.jumpC < 2) { localPlayer.vy = localPlayer.jumpC === 0 ? -14 : -11; localPlayer.jumpC++; spark(localPlayer.x, localPlayer.y + 28, '#ff4', 4, 2); }
     if (keys['arrowdown'] && !localPlayer.grounded) localPlayer.vy += 0.7;
     if (jp['q'] && !localPlayer.atk && !localPlayer.spAtk) { const w = WEAP[localPlayer.wIdx]; localPlayer.atk = true; localPlayer.atkT = w.speed; localPlayer.atkF = w.speed; localPlayer.atkHit = false; }
     if (jp['w'] && !localPlayer.spAtk && !localPlayer.atk && localPlayer.spCD === 0) { const w = WEAP[localPlayer.wIdx]; localPlayer.spAtk = true; localPlayer.spT = w.speed + 10; localPlayer.spHit = false; localPlayer.spCD = w.spCD; }
