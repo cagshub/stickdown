@@ -5,7 +5,9 @@
       "Bash(node -e \"const fs=require\\('fs'\\); const html=fs.readFileSync\\('STICKDOWN.html','utf8'\\); const m=html.match\\(/<script>\\([\\\\s\\\\S]*\\)<\\\\/script>/\\); try{new Function\\(m[1]\\);console.log\\('OK - no syntax errors'\\)}catch\\(e\\){console.log\\('ERROR:',e.message\\)}\")",
       "Bash(gh repo:*)",
       "Bash(npm install:*)",
-      "Bash(node -e \"const fs=require\\('fs'\\); const html=fs.readFileSync\\('public/index.html','utf8'\\); const m=html.match\\(/<script>\\(?!.*socket\\\\.io\\)\\([\\\\s\\\\S]*\\)<\\\\/script>/\\); try{new Function\\(m[1]\\);console.log\\('OK'\\)}catch\\(e\\){console.log\\('ERROR:',e.message\\)}\")"
+      "Bash(node -e \"const fs=require\\('fs'\\); const html=fs.readFileSync\\('public/index.html','utf8'\\); const m=html.match\\(/<script>\\(?!.*socket\\\\.io\\)\\([\\\\s\\\\S]*\\)<\\\\/script>/\\); try{new Function\\(m[1]\\);console.log\\('OK'\\)}catch\\(e\\){console.log\\('ERROR:',e.message\\)}\")",
+      "Bash(curl -s \"https://api.render.com/v1/services\" -H \"Authorization: Bearer \")",
+      "Bash(railway whoami:*)"
     ]
   }
 }

@@ -114,8 +114,16 @@ socket.on('connect', () => { myId = socket.id; });
 // ========== UI HELPERS ==========
 function showScreen(id) {
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-    document.getElementById(id).classList.add('active');
-    document.getElementById('c').style.display = id === 'none' ? 'block' : 'none';
+    if (id === 'game') {
+        // Oyun ekranı: tüm UI gizle, canvas göster
+        document.getElementById('ui').style.display = 'none';
+        document.getElementById('c').style.display = 'block';
+    } else {
+        document.getElementById('ui').style.display = 'flex';
+        document.getElementById('c').style.display = 'none';
+        const el = document.getElementById(id);
+        if (el) el.classList.add('active');
+    }
 }
 function goMenu() { showScreen('menuScreen'); }
 function getName() { return document.getElementById('nameInput').value.trim() || 'Anonim'; }
@@ -248,15 +256,13 @@ socket.on('weaponUpdated', data => {
 socket.on('chat', data => { addChat(data.name, data.msg); });
 socket.on('backToLobby', () => {
     gameRunning = false;
-    document.getElementById('c').style.display = 'none';
     showScreen('lobbyScreen');
     addChat('Sistem', 'Raund bitti! Host yeni raund başlatabilir.');
 });
 
 // ========== GAME START ==========
 socket.on('gameStart', data => {
-    showScreen('none');
-    document.getElementById('c').style.display = 'block';
+    showScreen('game');
     startOnlineGame(data);
 });
 
