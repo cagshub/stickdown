@@ -106,6 +106,7 @@ io.on('connection', (socket) => {
         room.roundNum++;
         if (data && data.botCount !== undefined) room.botCount = data.botCount;
         if (data && data.botDiff !== undefined) room.botDiff = data.botDiff;
+        if (data && data.mapId !== undefined) room.mapId = data.mapId;
 
         // Assign spawn positions
         const spawns = [];
@@ -127,7 +128,8 @@ io.on('connection', (socket) => {
             players: playerData,
             roundNum: room.roundNum,
             botCount: room.botCount || 0,
-            botDiff: room.botDiff || 1
+            botDiff: room.botDiff || 1,
+            mapId: room.mapId || 0
         });
         console.log(`Room ${currentRoom} game started (round ${room.roundNum})`);
     });
