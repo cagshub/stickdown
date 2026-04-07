@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>STICKDOWN Arena - Online PvP</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a0a;display:flex;justify-content:center;align-items:center;height:100vh;font-family:'Segoe UI',sans-serif;overflow:hidden;color:#fff}
+canvas{border-radius:4px;display:none}
+#ui{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
+#ui>*{pointer-events:all}
+.screen{display:none;flex-direction:column;align-items:center;gap:12px;padding:30px;border-radius:12px;background:rgba(10,5,20,0.95);border:1px solid #333;max-width:700px;width:90%}
+.screen.active{display:flex}
+.screen h1{font-size:52px;color:#f60;text-shadow:0 0 30px rgba(255,100,0,0.5);letter-spacing:6px}
+.screen h2{font-size:20px;color:#888;margin-bottom:10px}
+.screen h3{font-size:18px;color:#fa0}
+.btn{background:linear-gradient(135deg,#f60,#c30);color:#fff;border:none;padding:14px 40px;font-size:18px;border-radius:8px;cursor:pointer;transition:all .2s;letter-spacing:1px;font-weight:bold}
+.btn:hover{transform:scale(1.05);box-shadow:0 0 20px rgba(255,100,0,0.4)}
+.btn.secondary{background:linear-gradient(135deg,#444,#222);font-size:15px;padding:10px 30px}
+.btn.green{background:linear-gradient(135deg,#0a0,#070)}
+.btn.red{background:linear-gradient(135deg,#a00,#700)}
+input[type=text]{background:#1a1520;border:2px solid #333;color:#fff;padding:12px 18px;font-size:18px;border-radius:8px;text-align:center;width:220px;letter-spacing:3px;outline:none}
+input[type=text]:focus{border-color:#f60}
+input[type=text].name-input{letter-spacing:0;width:200px;font-size:16px}
+.room-code{font-size:64px;color:#f80;letter-spacing:12px;font-weight:bold;text-shadow:0 0 20px rgba(255,130,0,0.4)}
+.player-list{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin:10px 0}
+.player-tag{padding:6px 16px;border-radius:20px;font-size:14px;font-weight:bold}
+.weapon-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;width:100%}
+.weapon-card{background:#1a1520;border:2px solid #333;border-radius:8px;padding:12px;text-align:center;cursor:pointer;transition:all .2s}
+.weapon-card:hover{border-color:#666}
+.weapon-card.selected{border-color:#f80;background:rgba(255,100,0,0.15)}
+.weapon-card .icon{font-size:28px}
+.weapon-card .wname{font-size:14px;font-weight:bold;margin:4px 0}
+.weapon-card .wstats{font-size:11px;color:#888}
+.info{color:#666;font-size:13px;text-align:center}
+.lobby-rooms{display:flex;flex-direction:column;gap:6px;max-height:200px;overflow-y:auto;width:100%}
+.lobby-room{display:flex;justify-content:space-between;align-items:center;background:#1a1520;padding:10px 16px;border-radius:6px;border:1px solid #333}
+.chat-box{width:100%;max-height:120px;overflow-y:auto;background:#111;border-radius:6px;padding:8px;font-size:12px;color:#aaa}
+.chat-msg{margin:2px 0}
+.chat-msg .cn{font-weight:bold}
+#chatInput{width:100%;padding:8px;background:#1a1520;border:1px solid #333;color:#fff;border-radius:4px;font-size:13px;outline:none}
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<div id="ui">
+<!-- MAIN MENU -->
+<div class="screen active" id="menuScreen">
+    <h1>STICKDOWN</h1>
+    <h2>Online Arena PvP</h2>
+    <input type="text" class="name-input" id="nameInput" placeholder="Adını yaz..." maxlength="12" value="">
+    <button class="btn" onclick="showCreate()">ODA OLUŞTUR</button>
+    <button class="btn secondary" onclick="showJoin()">ODAYA KATIL</button>
+    <button class="btn secondary" onclick="showRoomList()">AÇIK ODALAR</button>
+    <p class="info">Arkadaşlarınla aynı odaya girip canlı PvP yap!</p>
+</div>
+
+<!-- CREATE ROOM -->
+<div class="screen" id="createScreen">
+    <h3>Silahını Seç</h3>
+    <div class="weapon-grid" id="weaponGrid1"></div>
+    <button class="btn green" onclick="doCreateRoom()">ODAYI OLUŞTUR</button>
+    <button class="btn secondary" onclick="goMenu()">GERİ</button>
+</div>
+
+<!-- JOIN ROOM -->
+<div class="screen" id="joinScreen">
+    <h3>Oda Kodunu Gir</h3>
+    <input type="text" id="roomCodeInput" placeholder="ABCDE" maxlength="5">
+    <div class="weapon-grid" id="weaponGrid2"></div>
+    <button class="btn" onclick="doJoinRoom()">KATIL</button>
+    <button class="btn secondary" onclick="goMenu()">GERİ</button>
+    <p class="info" id="joinError" style="color:#f44"></p>
+</div>
+
+<!-- ROOM LIST -->
+<div class="screen" id="listScreen">
+    <h3>Açık Odalar</h3>
+    <div class="lobby-rooms" id="roomListDiv"><p class="info">Yükleniyor...</p></div>
+    <button class="btn secondary" onclick="goMenu()">GERİ</button>
+</div>
+
+<!-- LOBBY -->
+<div class="screen" id="lobbyScreen">
+    <h3>ODA</h3>
+    <div class="room-code" id="lobbyCode">-----</div>
+    <p class="info">Bu kodu arkadaşlarına gönder!</p>
+    <div class="player-list" id="lobbyPlayers"></div>
+    <div class="chat-box" id="chatBox"></div>
+    <input type="text" id="chatInput" placeholder="Mesaj yaz... (Enter)" maxlength="100">
+    <div style="display:flex;gap:10px">
+        <button class="btn green" id="startBtn" onclick="doStart()" style="display:none">BAŞLAT</button>
+        <button class="btn red" onclick="doLeave()">ÇIKIŞ</button>
+    </div>
+</div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+// ========== CONNECT ==========
+const socket = io();
+let myId = null;
+let myName = '';
+let myWeapon = 0;
+let isHost = false;
+let roomCode = '';
+let lobbyPlayers = [];
+
+socket.on('connect', () => { myId = socket.id; });
+
+// ========== UI HELPERS ==========
+function showScreen(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    document.getElementById('c').style.display = id === 'none' ? 'block' : 'none';
+}
+function goMenu() { showScreen('menuScreen'); }
+function getName() { return document.getElementById('nameInput').value.trim() || 'Anonim'; }
+
+// Weapon grid builder
+const WEAPONS = [
+    { name: 'Yumruk', dmg: 6, range: 42, speed: 8, icon: '👊', sp: 'Uppercut', color: '#fff' },
+    { name: 'Kılıç', dmg: 10, range: 78, speed: 12, icon: '⚔️', sp: 'Girdap', color: '#7bf' },
+    { name: 'Balta', dmg: 15, range: 62, speed: 18, icon: '🪓', sp: 'Ezici Darbe', color: '#f84' },
+    { name: 'Mızrak', dmg: 8, range: 108, speed: 13, icon: '🔱', sp: 'Şarj', color: '#8f8' },
+    { name: 'Çekiç', dmg: 18, range: 58, speed: 22, icon: '🔨', sp: 'Deprem', color: '#fa0' },
+    { name: 'Nunçaku', dmg: 7, range: 52, speed: 6, icon: '🥢', sp: 'Fırtına', color: '#f6f' }
+];
+
+function buildWeaponGrid(containerId) {
+    const grid = document.getElementById(containerId);
+    grid.innerHTML = '';
+    WEAPONS.forEach((w, i) => {
+        const card = document.createElement('div');
+        card.className = 'weapon-card' + (i === myWeapon ? ' selected' : '');
+        card.innerHTML = `<div class="icon">${w.icon}</div><div class="wname" style="color:${w.color}">${w.name}</div><div class="wstats">Hasar:${w.dmg} Menzil:${w.range}<br>Özel: ${w.sp}</div>`;
+        card.onclick = () => {
+            myWeapon = i;
+            grid.querySelectorAll('.weapon-card').forEach(c => c.classList.remove('selected'));
+            card.classList.add('selected');
+            if (roomCode) socket.emit('updateWeapon', { weaponIdx: i });
+        };
+        grid.appendChild(card);
+    });
+}
+
+function showCreate() { myName = getName(); buildWeaponGrid('weaponGrid1'); showScreen('createScreen'); }
+function showJoin() { myName = getName(); buildWeaponGrid('weaponGrid2'); showScreen('joinScreen'); document.getElementById('joinError').textContent = ''; }
+
+function showRoomList() {
+    showScreen('listScreen');
+    fetch('/api/rooms').then(r => r.json()).then(rooms => {
+        const div = document.getElementById('roomListDiv');
+        if (rooms.length === 0) { div.innerHTML = '<p class="info">Açık oda yok. Bir tane oluştur!</p>'; return; }
+        div.innerHTML = '';
+        rooms.forEach(r => {
+            const row = document.createElement('div');
+            row.className = 'lobby-room';
+            row.innerHTML = `<span>${r.code} — ${r.host} (${r.players}/${r.max})</span>`;
+            const btn = document.createElement('button');
+            btn.className = 'btn secondary';
+            btn.textContent = 'KATIL';
+            btn.style.padding = '6px 16px';
+            btn.onclick = () => { document.getElementById('roomCodeInput').value = r.code; doJoinRoom(); };
+            row.appendChild(btn);
+            div.appendChild(row);
+        });
+    });
+}
+
+// ========== ROOM ACTIONS ==========
+function doCreateRoom() {
+    myName = getName();
+    socket.emit('createRoom', { name: myName, weaponIdx: myWeapon });
+}
+function doJoinRoom() {
+    myName = getName();
+    const code = document.getElementById('roomCodeInput').value.trim();
+    if (!code) { document.getElementById('joinError').textContent = 'Kod gir!'; return; }
+    socket.emit('joinRoom', { code, name: myName, weaponIdx: myWeapon });
+}
+function doLeave() { location.reload(); }
+function doStart() { socket.emit('startGame'); }
+
+function updateLobbyUI() {
+    document.getElementById('lobbyCode').textContent = roomCode;
+    const div = document.getElementById('lobbyPlayers');
+    const colors = ['#4af', '#f44', '#4f8', '#f6f', '#ff4', '#4ff', '#f88', '#84f'];
+    div.innerHTML = lobbyPlayers.map((p, i) =>
+        `<span class="player-tag" style="background:${colors[i]};color:#000">${p.name} [${WEAPONS[p.weaponIdx]?.icon || '?'}]${p.id === myId ? ' (Sen)' : ''}</span>`
+    ).join('');
+    document.getElementById('startBtn').style.display = isHost ? 'inline-block' : 'none';
+}
+
+// Chat
+document.getElementById('chatInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+        const input = e.target;
+        if (input.value.trim()) { socket.emit('chat', input.value.trim()); input.value = ''; }
+    }
+});
+
+function addChat(name, msg) {
+    const box = document.getElementById('chatBox');
+    const d = document.createElement('div');
+    d.className = 'chat-msg';
+    d.innerHTML = `<span class="cn" style="color:#fa0">${name}:</span> ${msg}`;
+    box.appendChild(d);
+    box.scrollTop = box.scrollHeight;
+}
+
+// ========== SOCKET EVENTS (LOBBY) ==========
+socket.on('roomCreated', data => {
+    roomCode = data.code; isHost = true; lobbyPlayers = data.players;
+    showScreen('lobbyScreen'); updateLobbyUI();
+    addChat('Sistem', 'Oda oluşturuldu! Kodu paylaş.');
+});
+socket.on('roomJoined', data => {
+    roomCode = data.code; isHost = (data.hostId === myId); lobbyPlayers = data.players;
+    showScreen('lobbyScreen'); updateLobbyUI();
+    addChat('Sistem', 'Odaya katıldın!');
+});
+socket.on('joinError', msg => {
+    if (document.getElementById('joinScreen').classList.contains('active'))
+        document.getElementById('joinError').textContent = msg;
+    else addChat('Sistem', msg);
+});
+socket.on('playerJoined', data => {
+    lobbyPlayers = data.players; updateLobbyUI();
+    addChat('Sistem', `${data.name} odaya katıldı!`);
+});
+socket.on('playerLeft', data => {
+    lobbyPlayers = data.players; updateLobbyUI();
+    addChat('Sistem', 'Bir oyuncu ayrıldı.');
+});
+socket.on('newHost', data => {
+    isHost = (data.id === myId); updateLobbyUI();
+    if (isHost) addChat('Sistem', 'Artık host sensin!');
+});
+socket.on('weaponUpdated', data => {
+    const p = lobbyPlayers.find(p => p.id === data.id);
+    if (p) p.weaponIdx = data.weaponIdx;
+    updateLobbyUI();
+});
+socket.on('chat', data => { addChat(data.name, data.msg); });
+socket.on('backToLobby', () => {
+    gameRunning = false;
+    document.getElementById('c').style.display = 'none';
+    showScreen('lobbyScreen');
+    addChat('Sistem', 'Raund bitti! Host yeni raund başlatabilir.');
+});
+
+// ========== GAME START ==========
+socket.on('gameStart', data => {
+    showScreen('none');
+    document.getElementById('c').style.display = 'block';
+    startOnlineGame(data);
+});
+
+// =====================================================
+// ==================== GAME ENGINE ====================
+// =====================================================
+const W = 1200, H = 700;
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+canvas.width = W; canvas.height = H;
+
+const GV = 0.5, GROUND = 590;
+const WEAP = [
+    { name: 'Yumruk', range: 42, dmg: 6, speed: 8, color: '#fff', spName: 'Uppercut', spDmg: 14, spRange: 50, spCD: 30 },
+    { name: 'Kılıç', range: 78, dmg: 10, speed: 12, color: '#7bf', spName: 'Girdap', spDmg: 18, spRange: 95, spCD: 55 },
+    { name: 'Balta', range: 62, dmg: 15, speed: 18, color: '#f84', spName: 'Ezici Darbe', spDmg: 28, spRange: 70, spCD: 70 },
+    { name: 'Mızrak', range: 108, dmg: 8, speed: 13, color: '#8f8', spName: 'Şarj', spDmg: 20, spRange: 130, spCD: 60 },
+    { name: 'Çekiç', range: 58, dmg: 18, speed: 22, color: '#fa0', spName: 'Deprem', spDmg: 25, spRange: 160, spCD: 80 },
+    { name: 'Nunçaku', range: 52, dmg: 7, speed: 6, color: '#f6f', spName: 'Fırtına', spDmg: 22, spRange: 60, spCD: 40 }
+];
+
+const platforms = [
+    { x: 0, y: GROUND, w: W, h: 110 },
+    { x: 80, y: 475, w: 200, h: 14 },
+    { x: 500, y: 410, w: 200, h: 14 },
+    { x: 920, y: 475, w: 200, h: 14 },
+    { x: 280, y: 330, w: 160, h: 14 },
+    { x: 760, y: 330, w: 160, h: 14 },
+    { x: 510, y: 240, w: 180, h: 14 },
+];
+
+const keys = {}, jp = {};
+document.addEventListener('keydown', e => { const k = e.key.toLowerCase(); if (!keys[k]) jp[k] = true; keys[k] = true; if(gameRunning) e.preventDefault(); });
+document.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+let particles = [], screenShake = 0, gameRunning = false;
+let fighters = [], localPlayer = null;
+let remotePlayers = {}; // id -> fighter
+let botFighters = [];
+let roundInfo = {};
+let gameOverTimer = 0;
+let gameOverText = '';
+
+function spark(x,y,col,n,spd){for(let i=0;i<n;i++){const a=Math.random()*Math.PI*2,s=Math.random()*spd+1;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-2,life:20+Math.random()*20,ml:40,color:col,size:2+Math.random()*4})}}
+function hitSpark(x,y){for(let i=0;i<10;i++){const a=Math.random()*Math.PI*2,s=3+Math.random()*6;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:12+Math.random()*10,ml:22,color:'#ff0',size:2+Math.random()*3,trail:true})}}
+function dmgNum(x,y,val,col){particles.push({x,y,vx:(Math.random()-0.5)*2,vy:-3,life:45,ml:45,color:col,text:'-'+val,size:0})}
+function deathBurst(x,y,col){for(let i=0;i<40;i++){const a=Math.random()*Math.PI*2,s=2+Math.random()*8;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-3,life:30+Math.random()*30,ml:60,color:i%3===0?'#fff':col,size:2+Math.random()*6})}}
+
+function createFighter(x, y, color, hp, wIdx, name, isLocal) {
+    return {
+        x, y, vx: 0, vy: 0, color, hp, maxHp: hp,
+        facing: 1, grounded: false, wIdx,
+        atk: false, atkT: 0, atkF: 0, atkHit: false,
+        spAtk: false, spT: 0, spHit: false, spCD: 0,
+        blocking: false, stun: 0, jumpC: 0,
+        walkC: 0, flash: 0, dead: false, invuln: 0,
+        combo: 0, comboT: 0, kills: 0,
+        name: name || '', isLocal: !!isLocal,
+        isBot: false, ai: null, target: null,
+        _wasGrounded: false, _prevVY: 0
+    };
+}
+
+function createAI(diff) {
+    const d = diff || 1;
+    return {
+        react: Math.max(5, 35 - d * 3 + Math.random() * 10),
+        aggro: Math.min(0.85, 0.15 + d * 0.07 + Math.random() * 0.1),
+        blockChance: Math.min(0.5, d * 0.05),
+        specialChance: Math.min(0.45, 0.03 + d * 0.04),
+        dodgeChance: Math.min(0.4, d * 0.04),
+        timer: 0, action: 'idle', actionT: 0, retargetT: 0
+    };
+}
+
+// ========== START ONLINE GAME ==========
+function startOnlineGame(data) {
+    fighters = [];
+    particles = [];
+    remotePlayers = {};
+    botFighters = [];
+    screenShake = 0;
+    gameRunning = true;
+    gameOverTimer = 0;
+    gameOverText = '';
+    roundInfo = data;
+
+    // Create all player fighters
+    data.players.forEach(p => {
+        const f = createFighter(p.spawnX, p.spawnY, p.color, 150, p.weaponIdx, p.name, p.id === myId);
+        f.netId = p.id;
+        fighters.push(f);
+        if (p.id === myId) {
+            localPlayer = f;
+        } else {
+            remotePlayers[p.id] = f;
+        }
+    });
+
+    // Create bots (host manages, others just render)
+    const botNames = ['Gölge', 'Ateş', 'Buz', 'Fırtına', 'Kaya', 'Demir'];
+    const botColors = ['#888', '#aa6', '#6a8', '#a6a', '#8a6', '#6aa'];
+    for (let i = 0; i < (data.botCount || 0); i++) {
+        const b = createFighter(200 + Math.random() * 800, 200, botColors[i % 6], 80, Math.floor(Math.random() * 6), botNames[i % 6], false);
+        b.isBot = true;
+        b.ai = createAI(2);
+        b.netId = 'bot_' + i;
+        fighters.push(b);
+        botFighters.push(b);
+    }
+}
+
+// ========== NETWORK STATE SYNC ==========
+let sendTimer = 0;
+function sendState() {
+    if (!localPlayer || localPlayer.dead) return;
+    sendTimer++;
+    if (sendTimer % 3 !== 0) return; // ~20fps send rate
+    socket.emit('state', {
+        x: Math.round(localPlayer.x),
+        y: Math.round(localPlayer.y),
+        vx: +(localPlayer.vx.toFixed(1)),
+        vy: +(localPlayer.vy.toFixed(1)),
+        facing: localPlayer.facing,
+        hp: localPlayer.hp,
+        wIdx: localPlayer.wIdx,
+        atk: localPlayer.atk,
+        atkT: localPlayer.atkT,
+        atkF: localPlayer.atkF,
+        spAtk: localPlayer.spAtk,
+        spT: localPlayer.spT,
+        blocking: localPlayer.blocking,
+        dead: localPlayer.dead,
+        walkC: +(localPlayer.walkC.toFixed(2)),
+        grounded: localPlayer.grounded,
+        kills: localPlayer.kills
+    });
+
+    // Host sends bot states
+    if (isHost) {
+        botFighters.forEach(b => {
+            if (b.dead) return;
+            socket.emit('state', {
+                id: b.netId,
+                x: Math.round(b.x), y: Math.round(b.y),
+                vx: +(b.vx.toFixed(1)), vy: +(b.vy.toFixed(1)),
+                facing: b.facing, hp: b.hp, wIdx: b.wIdx,
+                atk: b.atk, atkT: b.atkT, atkF: b.atkF,
+                spAtk: b.spAtk, spT: b.spT,
+                blocking: b.blocking, dead: b.dead,
+                walkC: +(b.walkC.toFixed(2)), grounded: b.grounded, kills: b.kills
+            });
+        });
+    }
+}
+
+// Receive remote state
+socket.on('state', data => {
+    if (!gameRunning) return;
+    const id = data.id;
+    let f = remotePlayers[id];
+    // Bot state from host
+    if (!f) { f = fighters.find(ff => ff.netId === id); }
+    if (!f) return;
+
+    // Smooth interpolation for position
+    f._targetX = data.x;
+    f._targetY = data.y;
+    f.vx = data.vx;
+    f.vy = data.vy;
+    f.facing = data.facing;
+    f.hp = data.hp;
+    f.wIdx = data.wIdx;
+    f.atk = data.atk;
+    f.atkT = data.atkT;
+    f.atkF = data.atkF;
+    f.spAtk = data.spAtk;
+    f.spT = data.spT;
+    f.blocking = data.blocking;
+    f.dead = data.dead;
+    f.walkC = data.walkC;
+    f.grounded = data.grounded;
+    f.kills = data.kills || 0;
+});
+
+// Hit received
+socket.on('hit', data => {
+    if (!gameRunning) return;
+    const target = fighters.find(f => f.netId === data.targetId);
+    const attacker = fighters.find(f => f.netId === data.attackerId);
+    if (!target || target.dead) return;
+
+    const dmg = data.damage;
+    if (target.blocking) {
+        spark(target.x, target.y - 25, '#8af', 5, 3);
+        target.hp = Math.max(0, target.hp - Math.floor(dmg * 0.15));
+    } else {
+        target.stun = 10;
+        target.vx = data.knockX || 0;
+        target.vy = data.knockY || 0;
+        target.hp = Math.max(0, target.hp - dmg);
+        hitSpark((attacker ? attacker.x : target.x), target.y - 20);
+        spark(target.x, target.y - 20, target.color, 8, 4);
+        screenShake = Math.max(screenShake, Math.min(dmg * 0.4, 15));
+    }
+    target.flash = 8;
+    dmgNum(target.x, target.y - 40, dmg, target.blocking ? '#8af' : '#ff4');
+
+    if (target.hp <= 0 && !target.dead) {
+        target.dead = true;
+        deathBurst(target.x, target.y - 15, target.color);
+        screenShake = Math.max(screenShake, 12);
+        if (attacker) attacker.kills++;
+        if (target.isLocal) socket.emit('died', { killerId: data.attackerId });
+    }
+});
+
+socket.on('playerDied', data => {
+    const f = fighters.find(f => f.netId === data.id);
+    if (f && !f.dead) {
+        f.dead = true;
+        deathBurst(f.x, f.y - 15, f.color);
+        screenShake = Math.max(screenShake, 12);
+        const killer = fighters.find(ff => ff.netId === data.killerId);
+        if (killer) killer.kills++;
+    }
+});
+
+socket.on('playerLeft', data => {
+    if (!gameRunning) return;
+    const f = fighters.find(f => f.netId === data.id);
+    if (f) { f.dead = true; f.hp = 0; }
+    delete remotePlayers[data.id];
+});
+
+// ========== LOCAL COMBAT ==========
+function localAttackCheck() {
+    if (!localPlayer || localPlayer.dead) return;
+    const w = WEAP[localPlayer.wIdx];
+
+    fighters.forEach(f => {
+        if (f === localPlayer || f.dead || f.invuln > 0) return;
+        const dx = f.x - localPlayer.x;
+        const dy = f.y - localPlayer.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const facing = localPlayer.facing === 1 ? dx > -25 : dx < 25;
+        if (dist < w.range + 22 && facing) {
+            const dmg = w.dmg;
+            socket.emit('hit', {
+                targetId: f.netId,
+                damage: dmg,
+                knockX: localPlayer.facing * 4,
+                knockY: -2
+            });
+        }
+    });
+}
+
+function localSpecialCheck() {
+    if (!localPlayer || localPlayer.dead) return;
+    const w = WEAP[localPlayer.wIdx];
+
+    fighters.forEach(f => {
+        if (f === localPlayer || f.dead || f.invuln > 0) return;
+        const dx = f.x - localPlayer.x;
+        const dy = f.y - localPlayer.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        let inRange = false;
+
+        switch (w.spName) {
+            case 'Girdap': inRange = dist < w.spRange + 22; break;
+            case 'Deprem': inRange = Math.abs(dx) < w.spRange && f.grounded && localPlayer.grounded; break;
+            default: inRange = dist < w.spRange + 22 && (localPlayer.facing === 1 ? dx > -25 : dx < 25);
+        }
+        if (inRange) {
+            let kx = localPlayer.facing * 5, ky = -3;
+            if (w.spName === 'Uppercut') ky = -13;
+            if (w.spName === 'Şarj') kx = localPlayer.facing * 10;
+            if (w.spName === 'Deprem') ky = -9;
+            socket.emit('hit', { targetId: f.netId, damage: w.spDmg, knockX: kx, knockY: ky, special: true });
+        }
+    });
+
+    if (w.spName === 'Uppercut') localPlayer.vy = -7;
+    if (w.spName === 'Şarj') localPlayer.vx = localPlayer.facing * 12;
+    if (w.spName === 'Girdap') spark(localPlayer.x, localPlayer.y - 20, w.color, 18, 5);
+    if (w.spName === 'Ezici Darbe') { spark(localPlayer.x + localPlayer.facing * 25, localPlayer.y, '#f60', 20, 6); screenShake = Math.max(screenShake, 14); }
+    if (w.spName === 'Deprem') {
+        screenShake = Math.max(screenShake, 16);
+        for (let i = 0; i < 30; i++) particles.push({ x: localPlayer.x - 100 + Math.random() * 200, y: localPlayer.y + 28, vx: (Math.random() - 0.5) * 7, vy: -Math.random() * 8 - 2, life: 25 + Math.random() * 15, ml: 40, color: '#a85', size: 3 + Math.random() * 5 });
+    }
+    if (w.spName === 'Fırtına') spark(localPlayer.x + localPlayer.facing * 20, localPlayer.y - 20, '#f6f', 14, 4);
+}
+
+// ========== PHYSICS ==========
+function updateFighter(f) {
+    if (f.dead) return;
+
+    // Remote players: interpolate
+    if (!f.isLocal && !f.isBot) {
+        if (f._targetX !== undefined) {
+            f.x += (f._targetX - f.x) * 0.3;
+            f.y += (f._targetY - f.y) * 0.3;
+        }
+        if (f.flash > 0) f.flash--;
+        if (f.stun > 0) f.stun--;
+        return;
+    }
+
+    if (f.spCD > 0) f.spCD--;
+    if (f.comboT > 0) { f.comboT--; if (f.comboT === 0) f.combo = 0; }
+    if (f.flash > 0) f.flash--;
+    if (f.invuln > 0) f.invuln--;
+    if (f.stun > 0) { f.stun--; f.vx *= 0.88; }
+    else if (!f.blocking) { f.vx *= f.grounded ? 0.72 : 0.95; }
+    else { f.vx *= 0.55; }
+
+    if (f.atk) {
+        f.atkT--;
+        if (f.atkT === Math.floor(f.atkF / 2) && !f.atkHit) {
+            f.atkHit = true;
+            if (f.isLocal) localAttackCheck();
+            else if (f.isBot && isHost) botAttackCheck(f);
+        }
+        if (f.atkT <= 0) f.atk = false;
+    }
+    if (f.spAtk) {
+        f.spT--;
+        if (f.spT === Math.floor((WEAP[f.wIdx].speed + 10) / 2) && !f.spHit) {
+            f.spHit = true;
+            if (f.isLocal) localSpecialCheck();
+            else if (f.isBot && isHost) botSpecialCheck(f);
+        }
+        if (f.spT <= 0) f.spAtk = false;
+    }
+
+    f.vy += GV;
+    if (f.vy > 16) f.vy = 16;
+    f.x += f.vx; f.y += f.vy;
+
+    f.grounded = false;
+    for (const p of platforms) {
+        if (f.x + 12 > p.x && f.x - 12 < p.x + p.w) {
+            const prevBottom = f.y + 28 - f.vy;
+            if (f.y + 28 >= p.y && prevBottom <= p.y + 6 && f.vy >= 0) {
+                f.y = p.y - 28; f.vy = 0; f.grounded = true; f.jumpC = 0; continue;
+            }
+            if (p !== platforms[0] && f.y - 20 <= p.y + p.h && (f.y - 20 - f.vy) >= p.y + p.h - 4 && f.vy < 0) {
+                f.y = p.y + p.h + 20; f.vy = 1; continue;
+            }
+            if (p === platforms[0] && f.y + 28 > p.y && f.vy >= 0) {
+                f.y = p.y - 28; f.vy = 0; f.grounded = true; f.jumpC = 0;
+            }
+        }
+    }
+
+    // Push
+    for (const o of fighters) {
+        if (o === f || o.dead) continue;
+        const dx = f.x - o.x, dy = f.y - o.y, dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 22 && dist > 0) { f.vx += (dx / dist) * (22 - dist) * 0.3; }
+    }
+
+    if (f.x < 15) { f.x = 15; f.vx = Math.abs(f.vx) * 0.3; }
+    if (f.x > W - 15) { f.x = W - 15; f.vx = -Math.abs(f.vx) * 0.3; }
+    if (f.y > GROUND - 28) { f.y = GROUND - 28; f.vy = 0; f.grounded = true; f.jumpC = 0; }
+    if (f.y < -20) { f.y = -20; f.vy = 1; }
+
+    if (f.grounded && Math.abs(f.vx) > 0.8) f.walkC += 0.15;
+    else if (f.grounded) f.walkC *= 0.8;
+
+    if (f.grounded && f.vy === 0 && !f._wasGrounded && Math.abs(f._prevVY || 0) > 6) {
+        spark(f.x, f.y + 28, '#aa9977', 4, 2);
+    }
+    f._wasGrounded = f.grounded;
+    f._prevVY = f.vy;
+}
+
+// ========== BOT AI (host only) ==========
+function botAttackCheck(bot) {
+    const w = WEAP[bot.wIdx];
+    fighters.forEach(f => {
+        if (f === bot || f.dead) return;
+        const dx = f.x - bot.x, dist = Math.sqrt(dx * dx + (f.y - bot.y) ** 2);
+        const facing = bot.facing === 1 ? dx > -25 : dx < 25;
+        if (dist < w.range + 22 && facing) {
+            socket.emit('hit', { targetId: f.netId, damage: w.dmg, knockX: bot.facing * 4, knockY: -2 });
+        }
+    });
+}
+
+function botSpecialCheck(bot) {
+    const w = WEAP[bot.wIdx];
+    fighters.forEach(f => {
+        if (f === bot || f.dead) return;
+        const dx = f.x - bot.x, dist = Math.sqrt(dx * dx + (f.y - bot.y) ** 2);
+        let inRange = dist < w.spRange + 22 && (bot.facing === 1 ? dx > -25 : dx < 25);
+        if (w.spName === 'Girdap') inRange = dist < w.spRange + 22;
+        if (w.spName === 'Deprem') inRange = Math.abs(dx) < w.spRange && f.grounded;
+        if (inRange) {
+            let kx = bot.facing * 5, ky = -3;
+            if (w.spName === 'Uppercut') ky = -13;
+            if (w.spName === 'Şarj') kx = bot.facing * 10;
+            if (w.spName === 'Deprem') ky = -9;
+            socket.emit('hit', { targetId: f.netId, damage: w.spDmg, knockX: kx, knockY: ky, special: true });
+        }
+    });
+}
+
+function aiUpdate(f) {
+    if (!f.ai || f.dead || f.stun > 0) return;
+    const ai = f.ai;
+    ai.timer++;
+    ai.retargetT--;
+    if (ai.retargetT <= 0 || !f.target || f.target.dead) {
+        ai.retargetT = 30 + Math.random() * 40;
+        let best = null, bestD = 99999;
+        fighters.forEach(o => {
+            if (o === f || o.dead) return;
+            const d = Math.abs(o.x - f.x) + Math.abs(o.y - f.y) + Math.random() * 200;
+            if (d < bestD) { bestD = d; best = o; }
+        });
+        f.target = best;
+    }
+    if (!f.target) return;
+    const t = f.target, dx = t.x - f.x, dist = Math.abs(dx), wep = WEAP[f.wIdx];
+    f.facing = dx > 0 ? 1 : -1;
+    if (ai.timer < ai.react) return;
+    ai.actionT--;
+    if (ai.actionT <= 0) {
+        if (t.atk && dist < 80 && Math.random() < ai.blockChance) { ai.action = 'block'; ai.actionT = 12; }
+        else if (t.atk && dist < 100 && Math.random() < ai.dodgeChance) { ai.action = 'dodge'; ai.actionT = 18; }
+        else if (dist < wep.range + 25 && Math.random() < ai.aggro) {
+            ai.action = f.spCD === 0 && Math.random() < ai.specialChance ? 'special' : 'attack';
+            ai.actionT = wep.speed + 8;
+        } else if (dist > wep.range + 40) { ai.action = 'approach'; ai.actionT = 20; }
+        else { ai.action = Math.random() < 0.25 ? 'jump' : 'idle'; ai.actionT = 15; }
+    }
+    f.blocking = false;
+    const spd = f.grounded ? 4.2 : 3;
+    switch (ai.action) {
+        case 'approach': f.vx = dx > 0 ? spd : -spd; if (f.grounded && Math.random() < 0.03) { f.vy = -11; f.jumpC = 1; } break;
+        case 'dodge': f.vx = dx > 0 ? -6 : 6; if (f.grounded) { f.vy = -9; f.jumpC = 1; } break;
+        case 'block': f.blocking = true; f.vx *= 0.4; break;
+        case 'attack': if (!f.atk && !f.spAtk) { f.atk = true; f.atkT = wep.speed; f.atkF = wep.speed; f.atkHit = false; } break;
+        case 'special': if (!f.spAtk && !f.atk && f.spCD === 0) { f.spAtk = true; f.spT = wep.speed + 10; f.spHit = false; f.spCD = wep.spCD; } break;
+        case 'jump': if (f.grounded) { f.vy = -11; f.jumpC = 1; } ai.action = 'approach'; break;
+        default: f.vx *= 0.8;
+    }
+}
+
+// ========== INPUT ==========
+function handleInput() {
+    if (!localPlayer || localPlayer.dead || localPlayer.stun > 0) return;
+    localPlayer.blocking = keys['e'] && localPlayer.grounded;
+    if (localPlayer.blocking) return;
+    const spd = localPlayer.grounded ? 6 : 4;
+    if (keys['arrowleft']) { localPlayer.vx = -spd; localPlayer.facing = -1; }
+    else if (keys['arrowright']) { localPlayer.vx = spd; localPlayer.facing = 1; }
+    if (jp['arrowup'] && localPlayer.jumpC < 2) { localPlayer.vy = localPlayer.jumpC === 0 ? -12 : -10; localPlayer.jumpC++; spark(localPlayer.x, localPlayer.y + 28, '#ff4', 4, 2); }
+    if (keys['arrowdown'] && !localPlayer.grounded) localPlayer.vy += 0.7;
+    if (jp['q'] && !localPlayer.atk && !localPlayer.spAtk) { const w = WEAP[localPlayer.wIdx]; localPlayer.atk = true; localPlayer.atkT = w.speed; localPlayer.atkF = w.speed; localPlayer.atkHit = false; }
+    if (jp['w'] && !localPlayer.spAtk && !localPlayer.atk && localPlayer.spCD === 0) { const w = WEAP[localPlayer.wIdx]; localPlayer.spAtk = true; localPlayer.spT = w.speed + 10; localPlayer.spHit = false; localPlayer.spCD = w.spCD; }
+    if (jp['r']) { localPlayer.wIdx = (localPlayer.wIdx + 1) % WEAP.length; spark(localPlayer.x, localPlayer.y - 25, WEAP[localPlayer.wIdx].color, 8, 3); }
+}
+
+// ========== DRAW ==========
+function shadeCol(hex, amt) { let r = parseInt(hex.slice(1, 3), 16) + amt, g = parseInt(hex.slice(3, 5), 16) + amt, b = parseInt(hex.slice(5, 7), 16) + amt; return `rgb(${Math.max(0, Math.min(255, r))},${Math.max(0, Math.min(255, g))},${Math.max(0, Math.min(255, b))})`; }
+
+function drawBG() {
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#0d0015'); g.addColorStop(0.4, '#150a20'); g.addColorStop(1, '#0a1525');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(255,100,0,0.06)'; ctx.lineWidth = 1;
+    for (let i = 0; i < W; i += 60) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, H); ctx.stroke(); }
+    for (let i = 0; i < H; i += 60) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(W, i); ctx.stroke(); }
+    ctx.fillStyle = 'rgba(30,20,40,0.85)';
+    for (let i = 0; i < W; i += 17) { ctx.beginPath(); ctx.arc(i, 82 + Math.sin(i * 0.5 + Date.now() * 0.002) * 4, 8, Math.PI, 0); ctx.fill(); }
+    ctx.save(); ctx.globalAlpha = 0.06; ctx.font = 'bold 90px Segoe UI'; ctx.textAlign = 'center'; ctx.fillStyle = '#f60'; ctx.fillText('STICKDOWN ARENA', 600, 160); ctx.restore();
+}
+
+function drawPlats() {
+    platforms.forEach((p, i) => {
+        if (i === 0) {
+            const gg = ctx.createLinearGradient(0, p.y, 0, p.y + p.h); gg.addColorStop(0, '#2a2020'); gg.addColorStop(1, '#0a0505');
+            ctx.fillStyle = gg; ctx.fillRect(p.x, p.y, p.w, p.h);
+            ctx.strokeStyle = '#f60'; ctx.lineWidth = 2; ctx.globalAlpha = 0.35; ctx.beginPath(); ctx.moveTo(0, p.y); ctx.lineTo(W, p.y); ctx.stroke(); ctx.globalAlpha = 1;
+        } else {
+            ctx.fillStyle = '#1a1520'; ctx.fillRect(p.x + 3, p.y + 3, p.w, p.h + 6);
+            const pg = ctx.createLinearGradient(0, p.y, 0, p.y + p.h); pg.addColorStop(0, '#3a2a40'); pg.addColorStop(1, '#2a1a30');
+            ctx.fillStyle = pg; ctx.fillRect(p.x, p.y, p.w, p.h);
+            ctx.strokeStyle = 'rgba(255,100,0,0.25)'; ctx.lineWidth = 1; ctx.strokeRect(p.x, p.y, p.w, p.h);
+        }
+    });
+    ctx.strokeStyle = 'rgba(255,60,0,0.15)'; ctx.lineWidth = 3; ctx.strokeRect(5, 95, W - 10, GROUND - 90);
+}
+
+function drawStick(f) {
+    if (f.dead) return;
+    ctx.save(); ctx.translate(f.x, f.y);
+    if (f.invuln > 0 && Math.floor(f.invuln / 3) % 2 === 0) ctx.globalAlpha = 0.4;
+    const fl = f.flash > 0 && f.flash % 2 === 0;
+    const col = fl ? '#fff' : f.color;
+    const w = WEAP[f.wIdx];
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(0, 30, 14, 5, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowColor = f.color; ctx.shadowBlur = f.isLocal ? 14 : 8;
+    const wk = Math.sin(f.walkC) * 5, ls = Math.sin(f.walkC) * 8, bob = f.grounded ? wk * 0.3 : 0;
+    ctx.strokeStyle = col; ctx.lineWidth = f.isLocal ? 4 : 3.5; ctx.lineCap = 'round';
+
+    if (f.blocking) {
+        ctx.beginPath(); ctx.moveTo(0, 5); ctx.lineTo(-7, 28); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, 5); ctx.lineTo(7, 28); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, -14); ctx.lineTo(0, 5); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, -10); ctx.lineTo(f.facing * 12, -16); ctx.lineTo(f.facing * 12, -3); ctx.stroke();
+        ctx.strokeStyle = 'rgba(100,180,255,0.7)'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(f.facing * 14, -8, 14, -Math.PI / 2, Math.PI / 2); ctx.stroke();
+        ctx.fillStyle = col; ctx.beginPath(); ctx.arc(0, -21, 8, 0, Math.PI * 2); ctx.fill();
+        drawTag(f); ctx.restore(); return;
+    }
+
+    let armA = 0, wExt = 0;
+    if (f.atk && f.atkF > 0) { const pr = 1 - f.atkT / f.atkF; armA = Math.sin(pr * Math.PI) * 1.5; wExt = Math.sin(pr * Math.PI) * w.range * 0.55; }
+    if (f.spAtk) {
+        const tot = w.speed + 10, pr = f.spT > 0 ? 1 - f.spT / tot : 1;
+        if (w.spName === 'Girdap') { armA = pr * Math.PI * 4; wExt = w.spRange * 0.45; }
+        else if (w.spName === 'Uppercut') { armA = -Math.sin(pr * Math.PI) * 2; wExt = Math.sin(pr * Math.PI) * 35; }
+        else { armA = Math.sin(pr * Math.PI) * 2; wExt = Math.sin(pr * Math.PI) * w.spRange * 0.45; }
+    }
+
+    if (f.grounded) {
+        ctx.beginPath(); ctx.moveTo(0, 5); ctx.lineTo(-ls - 4, 28); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, 5); ctx.lineTo(ls + 4, 28); ctx.stroke();
+    } else {
+        ctx.beginPath(); ctx.moveTo(0, 5); ctx.lineTo(-7, 18); ctx.lineTo(-4, 28); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, 5); ctx.lineTo(7, 18); ctx.lineTo(4, 28); ctx.stroke();
+    }
+    ctx.beginPath(); ctx.moveTo(0, -14 + bob); ctx.lineTo(0, 5); ctx.stroke();
+    ctx.strokeStyle = fl ? '#ccc' : shadeCol(f.color, -40); ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(0, -9 + bob); ctx.lineTo(-f.facing * 9, -4 + bob + Math.sin(f.walkC + 1) * 3); ctx.stroke();
+    ctx.strokeStyle = col; ctx.lineWidth = f.isLocal ? 4 : 3.5;
+    const ax = f.facing * 9 + f.facing * Math.cos(armA) * 10, ay = -9 + bob + Math.sin(armA) * 7;
+    ctx.beginPath(); ctx.moveTo(0, -9 + bob); ctx.lineTo(ax, ay); ctx.stroke();
+
+    // Weapon
+    if (f.wIdx > 0 || f.atk || f.spAtk) {
+        ctx.save(); ctx.translate(ax, ay); ctx.rotate(armA * f.facing);
+        ctx.strokeStyle = w.color; ctx.lineWidth = 2.5; ctx.shadowColor = w.color; ctx.shadowBlur = 5;
+        const len = 12 + wExt;
+        switch (w.name) {
+            case 'Yumruk': ctx.fillStyle = w.color; ctx.beginPath(); ctx.arc(f.facing * (4 + wExt * 0.4), 0, 4.5, 0, Math.PI * 2); ctx.fill(); break;
+            case 'Kılıç': ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(f.facing * len, -2.5); ctx.lineTo(f.facing * (len + 4), 0); ctx.lineTo(f.facing * len, 2.5); ctx.closePath(); ctx.fillStyle = w.color; ctx.fill(); break;
+            case 'Balta': ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(f.facing * len * 0.65, 0); ctx.stroke(); ctx.fillStyle = '#c40'; ctx.beginPath(); ctx.moveTo(f.facing * len * 0.55, -10); ctx.lineTo(f.facing * len * 0.85, -4); ctx.lineTo(f.facing * len * 0.85, 4); ctx.lineTo(f.facing * len * 0.55, 10); ctx.fill(); break;
+            case 'Mızrak': ctx.beginPath(); ctx.moveTo(-f.facing * 8, 0); ctx.lineTo(f.facing * len, 0); ctx.stroke(); ctx.fillStyle = '#4f4'; ctx.beginPath(); ctx.moveTo(f.facing * len, 0); ctx.lineTo(f.facing * (len - 8), -4); ctx.lineTo(f.facing * (len - 8), 4); ctx.fill(); break;
+            case 'Çekiç': ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(f.facing * len * 0.65, 0); ctx.stroke(); ctx.fillStyle = '#888'; ctx.fillRect(f.facing * len * 0.5 - 5, -9, 14, 18); ctx.fillStyle = '#fa0'; ctx.fillRect(f.facing * len * 0.5 - 3, -7, 10, 14); break;
+            case 'Nunçaku': ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(f.facing * 10, 4); ctx.stroke(); break;
+        }
+        ctx.shadowBlur = 0; ctx.restore();
+    }
+
+    ctx.shadowBlur = f.isLocal ? 18 : 10; ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(0, -20 + bob, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#000'; ctx.fillRect(f.facing * 2.5 - 1.5, -22 + bob, 2.5, 2.5); ctx.fillRect(f.facing * 6 - 1.5, -22 + bob, 2.5, 2.5);
+
+    if (f.isLocal) { ctx.shadowBlur = 0; ctx.fillStyle = '#fd4'; ctx.font = 'bold 10px Segoe UI'; ctx.textAlign = 'center'; ctx.fillText('▼', 0, -34 + bob); }
+
+    drawTag(f);
+    ctx.restore();
+}
+
+function drawTag(f) {
+    ctx.shadowBlur = 0;
+    const bw = 32, bh = 3;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(-bw / 2 - 1, -38, bw + 2, bh + 2);
+    ctx.fillStyle = '#400'; ctx.fillRect(-bw / 2, -37, bw, bh);
+    const pct = f.hp / f.maxHp;
+    ctx.fillStyle = pct > 0.5 ? '#0c0' : pct > 0.25 ? '#fa0' : '#f22';
+    ctx.fillRect(-bw / 2, -37, bw * pct, bh);
+    ctx.font = 'bold 9px Segoe UI'; ctx.textAlign = 'center';
+    ctx.fillStyle = f.isLocal ? '#4af' : f.color;
+    ctx.fillText(f.name, 0, -42);
+}
+
+function drawParticles() {
+    particles.forEach(p => {
+        const a = p.life / p.ml; ctx.globalAlpha = a;
+        if (p.text) { ctx.font = 'bold 16px Segoe UI'; ctx.fillStyle = p.color; ctx.textAlign = 'center'; ctx.fillText(p.text, p.x, p.y); }
+        else if (p.trail) { ctx.strokeStyle = p.color; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x - p.vx * 3, p.y - p.vy * 3); ctx.stroke(); }
+        else { ctx.fillStyle = p.color; ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size); }
+    });
+    ctx.globalAlpha = 1;
+}
+
+function drawHUD() {
+    // All player HP bars at top
+    const sorted = [...fighters].filter(f => !f.isBot).sort((a, b) => b.kills - a.kills);
+    const barW = Math.min(200, (W - 40) / sorted.length - 10);
+
+    sorted.forEach((f, i) => {
+        const bx = 20 + i * (barW + 10), by = 12;
+        ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(bx, by, barW + 4, 22);
+        ctx.fillStyle = '#222'; ctx.fillRect(bx + 2, by + 2, barW, 18);
+        const pct = f.dead ? 0 : f.hp / f.maxHp;
+        ctx.fillStyle = f.color; ctx.fillRect(bx + 2, by + 2, barW * pct, 18);
+        ctx.font = 'bold 10px Segoe UI'; ctx.fillStyle = '#fff'; ctx.textAlign = 'left';
+        ctx.fillText(`${f.name} [${f.kills}]${f.dead ? ' ✗' : ''}`, bx + 5, by + 15);
+    });
+
+    // Local weapon info
+    if (localPlayer && !localPlayer.dead) {
+        const cw = WEAP[localPlayer.wIdx];
+        ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(20, 42, 200, 18);
+        ctx.fillStyle = cw.color; ctx.font = 'bold 11px Segoe UI'; ctx.textAlign = 'left';
+        ctx.fillText(`${WEAPONS[localPlayer.wIdx].icon} ${cw.name} | Özel: ${cw.spName}`, 25, 55);
+        if (localPlayer.spCD > 0) {
+            ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fillRect(22, 63, 80, 3);
+            ctx.fillStyle = '#fa0'; ctx.fillRect(22, 63, 80 * (1 - localPlayer.spCD / cw.spCD), 3);
+        } else {
+            ctx.fillStyle = '#0f0'; ctx.font = '10px Segoe UI'; ctx.fillText('● ÖZEL HAZIR [W]', 22, 73);
+        }
+    }
+
+    // Room code
+    ctx.textAlign = 'right'; ctx.font = 'bold 14px Segoe UI'; ctx.fillStyle = '#555';
+    ctx.fillText(`ODA: ${roomCode}`, W - 20, H - 15);
+
+    // Controls
+    ctx.textAlign = 'center'; ctx.font = '11px Segoe UI'; ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.fillText('Ok Tuşları: Hareket | Q: Saldırı | W: Özel | R: Silah | E: Savunma', 500, H - 10);
+
+    // Game over
+    if (gameOverTimer > 0) {
+        ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 250, W, 150);
+        ctx.textAlign = 'center'; ctx.font = 'bold 48px Segoe UI'; ctx.fillStyle = '#f80';
+        ctx.shadowColor = '#f80'; ctx.shadowBlur = 20;
+        ctx.fillText(gameOverText, 600, 310);
+        ctx.shadowBlur = 0;
+        ctx.font = '20px Segoe UI'; ctx.fillStyle = '#aaa';
+        ctx.fillText(isHost ? 'Host: lobiye dönmek için ESC' : 'Host lobiye döndürecek...', 600, 360);
+    }
+}
+
+// ========== GAME LOOP ==========
+function gameUpdate() {
+    if (!gameRunning) return;
+
+    handleInput();
+
+    // Update local + bots
+    fighters.forEach(f => {
+        if (f.isLocal || (f.isBot && isHost)) updateFighter(f);
+        else updateFighter(f); // remote: just interpolate
+    });
+
+    // Bot AI (host only)
+    if (isHost) botFighters.forEach(b => { if (!b.dead) aiUpdate(b); });
+
+    sendState();
+
+    // Check game end
+    const alivePlayers = fighters.filter(f => !f.dead && !f.isBot);
+    const aliveAll = fighters.filter(f => !f.dead);
+    if (gameOverTimer === 0 && aliveAll.length <= 1) {
+        const winner = aliveAll[0];
+        gameOverText = winner ? `${winner.name} KAZANDI!` : 'BERABERE!';
+        gameOverTimer = 180;
+    }
+    if (gameOverTimer > 0) {
+        gameOverTimer--;
+        if (gameOverTimer <= 0 && isHost) {
+            socket.emit('roundEnd');
+        }
+        if (keys['escape'] && isHost && gameOverTimer < 120) {
+            gameOverTimer = 1;
+        }
+    }
+
+    // Particles
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i]; p.x += p.vx; p.y += p.vy;
+        if (!p.text) { p.vy += 0.12; p.vx *= 0.98; } else { p.vy *= 0.95; }
+        p.life--; if (p.life <= 0) particles.splice(i, 1);
+    }
+    if (screenShake > 0) { screenShake *= 0.82; if (screenShake < 0.5) screenShake = 0; }
+}
+
+function gameDraw() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.save();
+    if (screenShake > 0) ctx.translate((Math.random() - 0.5) * screenShake * 2, (Math.random() - 0.5) * screenShake * 2);
+    drawBG(); drawPlats(); drawParticles();
+    fighters.forEach(f => { if (!f.isLocal) drawStick(f); });
+    if (localPlayer) drawStick(localPlayer);
+    drawHUD();
+    ctx.restore();
+}
+
+function gameLoop() {
+    if (gameRunning) { gameUpdate(); gameDraw(); }
+    for (const k in jp) delete jp[k];
+    requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+</script>
+</body>
+</html>
