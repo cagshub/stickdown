@@ -516,7 +516,7 @@ let _sendTick = 0;
 function sendState() {
     if (!localPlayer) return;
     _sendTick++;
-    if (_sendTick % 2 !== 0) return; // 30Hz gönderim, bandwidth optimize
+    if (_sendTick % 1 !== 0) return; // 60Hz gönderim
     socket.volatile.emit('state', {
         x: localPlayer.x,
         y: localPlayer.y,
@@ -720,8 +720,8 @@ function updateFighter(f) {
             if (Math.abs(dx) > 120 || Math.abs(dy) > 120) {
                 f.x = f._targetX; f.y = f._targetY;
             } else {
-                f.x += dx * 0.45;
-                f.y += dy * 0.45;
+                f.x += dx * 0.6;
+                f.y += dy * 0.6;
             }
         }
         if (f.flash > 0) f.flash--;
