@@ -1,0 +1,1205 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stickdown Arena</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{background:#000;display:flex;justify-content:center;align-items:center;height:100vh;font-family:'Segoe UI',sans-serif;overflow:hidden;user-select:none}
+        canvas{border-radius:4px}
+    </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const W=1200,H=700;
+const canvas=document.getElementById('c');
+const ctx=canvas.getContext('2d');
+canvas.width=W;canvas.height=H;
+
+// ========== INPUT ==========
+const keys={},jp={};
+document.addEventListener('keydown',e=>{const k=e.key.toLowerCase();if(!keys[k])jp[k]=true;keys[k]=true;e.preventDefault()});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false});
+function kd(k){return!!keys[k]}
+function kp(k){return!!jp[k]}
+
+// ========== CONSTANTS ==========
+const G=0.5;
+const GROUND=590;
+
+const WEAPONS=[
+    {name:'Yumruk',range:42,dmg:6,speed:8,color:'#fff',spName:'Uppercut',spDmg:14,spRange:50,spCD:30,icon:'👊'},
+    {name:'Kılıç',range:78,dmg:10,speed:12,color:'#7bf',spName:'Girdap',spDmg:18,spRange:95,spCD:55,icon:'⚔️'},
+    {name:'Balta',range:62,dmg:15,speed:18,color:'#f84',spName:'Ezici Darbe',spDmg:28,spRange:70,spCD:70,icon:'🪓'},
+    {name:'Mızrak',range:108,dmg:8,speed:13,color:'#8f8',spName:'Şarj',spDmg:20,spRange:130,spCD:60,icon:'🔱'},
+    {name:'Çekiç',range:58,dmg:18,speed:22,color:'#fa0',spName:'Deprem',spDmg:25,spRange:160,spCD:80,icon:'🔨'},
+    {name:'Nunçaku',range:52,dmg:7,speed:6,color:'#f6f',spName:'Fırtına',spDmg:22,spRange:60,spCD:40,icon:'🥢'}
+];
+
+const platforms=[
+    {x:0,y:GROUND,w:W,h:110},
+    {x:80,y:475,w:200,h:14},
+    {x:500,y:410,w:200,h:14},
+    {x:920,y:475,w:200,h:14},
+    {x:280,y:330,w:160,h:14},
+    {x:760,y:330,w:160,h:14},
+    {x:510,y:240,w:180,h:14},
+];
+
+// ========== PARTICLES ==========
+let particles=[];
+function spark(x,y,col,n,spd){for(let i=0;i<n;i++){const a=Math.random()*Math.PI*2,s=Math.random()*spd+1;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-2,life:20+Math.random()*20,ml:40,color:col,size:2+Math.random()*4})}}
+function hitSpark(x,y){for(let i=0;i<10;i++){const a=Math.random()*Math.PI*2,s=3+Math.random()*6;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:12+Math.random()*10,ml:22,color:'#ff0',size:2+Math.random()*3,trail:true})}}
+function dmgNum(x,y,val,col){particles.push({x,y,vx:(Math.random()-0.5)*2,vy:-3,life:45,ml:45,color:col,text:'-'+val,size:0})}
+function deathBurst(x,y,col){
+    for(let i=0;i<40;i++){const a=Math.random()*Math.PI*2,s=2+Math.random()*8;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-3,life:30+Math.random()*30,ml:60,color:i%3===0?'#fff':col,size:2+Math.random()*6})}
+}
+
+// ========== STATE ==========
+let screenShake=0,gameState='menu',slowMo=0;
+let announceText='',announceTimer=0;
+let fighters=[],player=null,player2=null;
+let roundNum=0,playerWins=0;
+let respawnQueue=[];
+let gameMode='arena'; // 'arena' or 'pvp'
+let pvpScore=[0,0]; // P1 wins, P2 wins
+let pvpRound=0,pvpMaxRounds=5;
+let menuSel=0; // 0=arena, 1=pvp
+
+// Stats
+let totalKills=0,totalDeaths=0;
+let roundKills=0,roundDeaths=0;
+
+const BOT_NAMES=['Gölge','Yıldırım','Ateş','Buz','Fırtına','Kaya','Rüzgar','Demir','Kurt','Şimşek','Alev','Dalga','Panter','Kartal','Aslan'];
+const BOT_COLORS=['#f44','#fa4','#4f8','#f6f','#ff4','#4ff','#f88','#8f4','#84f','#f48','#4fa','#a4f'];
+
+// ========== FIGHTER ==========
+function createFighter(x,y,color,hp,wIdx,name,isPlayer){
+    return{
+        x,y,vx:0,vy:0,color,
+        hp,maxHp:hp,
+        facing:1,grounded:false,
+        wIdx,
+        atk:false,atkT:0,atkF:0,atkHit:false,
+        spAtk:false,spT:0,spHit:false,spCD:0,
+        blocking:false,
+        stun:0,jumpC:0,
+        walkC:0,flash:0,
+        dead:false,invuln:0,
+        combo:0,comboT:0,
+        kills:0,
+        name:name||'',
+        isPlayer:!!isPlayer,
+        ai:isPlayer?null:createAI(),
+        target:null
+    };
+}
+
+function createAI(diff){
+    // diff = roundNum, aşama aşama zorlaşır
+    const d=diff||1;
+    return{
+        react:Math.max(5, 35 - d*3 + Math.random()*10),    // başta yavaş tepki, giderek hızlanır
+        aggro:Math.min(0.85, 0.15 + d*0.07 + Math.random()*0.1), // başta pasif, giderek saldırgan
+        blockChance:Math.min(0.5, d*0.05),                 // başta savunma yapmaz, sonra öğrenir
+        specialChance:Math.min(0.45, 0.03 + d*0.04),       // özel saldırı kullanımı artar
+        dodgeChance:Math.min(0.4, d*0.04),                  // kaçınma yeteneği artar
+        timer:0,
+        action:'idle',
+        actionT:0,
+        retargetT:0
+    };
+}
+
+// ========== ROUND SETUP ==========
+function setupRound(){
+    roundNum++;
+    fighters=[];
+    particles=[];
+    screenShake=0;
+    respawnQueue=[];
+
+    // Player
+    player=createFighter(600,200,'#4af',120,player?player.wIdx:0,'SEN',true);
+    fighters.push(player);
+
+    // Bots - herkes birbirine saldıracak, aşama aşama zorlaşır
+    const botCount=Math.min(2+Math.floor(roundNum*0.8),10);
+    const usedColors=[...BOT_COLORS].sort(()=>Math.random()-0.5);
+    const usedNames=[...BOT_NAMES].sort(()=>Math.random()-0.5);
+    const hpBase=40+roundNum*12;
+
+    let diffName='';
+    if(roundNum<=2)diffName='KOLAY';
+    else if(roundNum<=4)diffName='NORMAL';
+    else if(roundNum<=6)diffName='ZOR';
+    else if(roundNum<=8)diffName='ÇOK ZOR';
+    else diffName='CEHENNEM';
+
+    for(let i=0;i<botCount;i++){
+        const spX=100+Math.random()*(W-200);
+        const spY=200+Math.random()*200;
+        const botHp=Math.min(hpBase+Math.random()*20,220);
+        const e=createFighter(spX,spY,usedColors[i%usedColors.length],botHp,Math.floor(Math.random()*WEAPONS.length),usedNames[i%usedNames.length],false);
+        e.facing=Math.random()>0.5?1:-1;
+        e.ai=createAI(roundNum);
+        e.dmgMult=1+roundNum*0.08;
+        fighters.push(e);
+    }
+
+    roundKills=0;roundDeaths=0;
+    announceText=`RAUND ${roundNum} — ${diffName} (${botCount} düşman)`;
+    announceTimer=150;
+}
+
+// ========== AI ==========
+function aiUpdate(f){
+    if(!f.ai||f.dead||f.stun>0)return;
+    const ai=f.ai;
+    ai.timer++;
+
+    // Retarget: en yakın canlı düşmanı bul
+    ai.retargetT--;
+    if(ai.retargetT<=0||!f.target||f.target.dead){
+        ai.retargetT=30+Math.random()*40;
+        let best=null,bestD=99999;
+        for(const o of fighters){
+            if(o===f||o.dead)continue;
+            const d=Math.abs(o.x-f.x)+Math.abs(o.y-f.y);
+            // Biraz rastgelelik ekle ki herkes aynı kişiye saldırmasın
+            const rD=d+Math.random()*200;
+            if(rD<bestD){bestD=rD;best=o;}
+        }
+        f.target=best;
+    }
+
+    if(!f.target)return;
+    const t=f.target;
+    const dx=t.x-f.x;
+    const dy=t.y-f.y;
+    const dist=Math.abs(dx);
+    const wep=WEAPONS[f.wIdx];
+
+    f.facing=dx>0?1:-1;
+
+    if(ai.timer<ai.react)return;
+
+    ai.actionT--;
+    if(ai.actionT<=0){
+        // Saldırı altındaysa savunma veya kaçınma deneyebilir
+        if(f.target&&f.target.atk&&dist<80&&Math.random()<(ai.blockChance||0)){
+            ai.action='block';ai.actionT=12+Math.random()*10;
+        }else if(f.target&&f.target.atk&&dist<100&&Math.random()<(ai.dodgeChance||0)){
+            ai.action='dodge';ai.actionT=18;
+        }else if(dist<wep.range+25&&Math.random()<ai.aggro){
+            if(f.spCD===0&&Math.random()<(ai.specialChance||0.1)){
+                ai.action='special';
+            }else{
+                ai.action='attack';
+            }
+            ai.actionT=wep.speed+8;
+        }else if(dist<60&&f.hp<f.maxHp*0.3&&Math.random()<0.4){
+            ai.action='flee';
+            ai.actionT=25+Math.random()*20;
+        }else if(dist>wep.range+40){
+            ai.action='approach';
+            ai.actionT=15+Math.random()*25;
+        }else if(dist<35){
+            ai.action='back';
+            ai.actionT=10+Math.random()*15;
+        }else{
+            ai.action=Math.random()<0.25?'jump':'idle';
+            ai.actionT=12+Math.random()*20;
+        }
+    }
+
+    f.blocking=false;
+    const spd=f.grounded?4.2:3;
+
+    switch(ai.action){
+        case'approach':
+            f.vx=dx>0?spd:-spd;
+            if(f.grounded&&(dy<-60||Math.random()<0.025)){f.vy=-11;f.jumpC=1;}
+            break;
+        case'back':
+            f.vx=dx>0?-spd:spd;
+            break;
+        case'flee':
+            f.vx=dx>0?-spd*1.2:spd*1.2;
+            if(f.grounded&&Math.random()<0.08){f.vy=-11;f.jumpC=1;}
+            break;
+        case'attack':
+            if(!f.atk&&!f.spAtk){f.atk=true;f.atkT=wep.speed;f.atkF=wep.speed;f.atkHit=false;}
+            if(dist>wep.range)f.vx=dx>0?spd*0.5:-spd*0.5;
+            break;
+        case'special':
+            if(!f.spAtk&&!f.atk&&f.spCD===0){f.spAtk=true;f.spT=wep.speed+10;f.spHit=false;f.spCD=wep.spCD;}
+            break;
+        case'dodge':
+            f.vx=dx>0?-6:6;
+            if(f.grounded){f.vy=-9;f.jumpC=1;}
+            break;
+        case'block':
+            f.blocking=true;f.vx*=0.4;
+            break;
+        case'jump':
+            if(f.grounded){f.vy=-11;f.jumpC=1;}
+            ai.action='approach';
+            break;
+        default:
+            f.vx*=0.8;
+    }
+}
+
+// ========== COMBAT ==========
+function doHit(attacker,defender,dmg,range,knockX,knockY){
+    if(defender.dead||defender.invuln>0)return false;
+    const dx=defender.x-attacker.x;
+    const dy=defender.y-attacker.y;
+    const dist=Math.sqrt(dx*dx+dy*dy);
+    const facing=attacker.facing===1?dx>-25:dx<25;
+
+    if(dist<range+22&&facing){
+        let d=dmg;
+        if(defender.blocking){
+            d=Math.floor(d*0.15);
+            spark(defender.x+attacker.facing*15,defender.y-25,'#8af',5,3);
+            screenShake=Math.max(screenShake,2);
+        }else{
+            attacker.combo++;attacker.comboT=90;
+            d=Math.floor(d*(1+attacker.combo*0.1));
+            defender.stun=10;
+            defender.vx=attacker.facing*knockX;
+            defender.vy=knockY;
+            screenShake=Math.max(screenShake,Math.min(d*0.4,15));
+            hitSpark((attacker.x+defender.x)/2,(attacker.y+defender.y)/2-20);
+            spark((attacker.x+defender.x)/2,(attacker.y+defender.y)/2-20,defender.color,8,4);
+        }
+        defender.hp=Math.max(0,defender.hp-d);
+        defender.flash=8;
+        dmgNum(defender.x,defender.y-40,d,defender.blocking?'#8af':'#ff4');
+        if(defender.hp<=0)killFighter(defender,attacker);
+        return true;
+    }
+    return false;
+}
+
+function doSpecial(attacker,targets){
+    const w=WEAPONS[attacker.wIdx];
+    for(const def of targets){
+        if(def===attacker||def.dead||def.invuln>0)continue;
+        switch(w.spName){
+            case'Uppercut':
+                if(doHit(attacker,def,w.spDmg,w.spRange,3,-13)){
+                    spark(def.x,def.y-10,'#ff4',12,5);
+                }
+                break;
+            case'Girdap':{
+                const dx2=def.x-attacker.x,dy2=def.y-attacker.y;
+                if(Math.sqrt(dx2*dx2+dy2*dy2)<w.spRange+22){
+                    doHit(attacker,def,w.spDmg,w.spRange+30,6,-4);
+                }
+                break;
+            }
+            case'Ezici Darbe':
+                doHit(attacker,def,w.spDmg,w.spRange,4,2);
+                break;
+            case'Şarj':
+                doHit(attacker,def,w.spDmg,w.spRange,10,-2);
+                break;
+            case'Deprem':{
+                const dx3=def.x-attacker.x;
+                if(Math.abs(dx3)<w.spRange&&def.grounded&&attacker.grounded){
+                    doHit(attacker,def,w.spDmg,w.spRange+30,2,-9);
+                }
+                break;
+            }
+            case'Fırtına':
+                doHit(attacker,def,w.spDmg,w.spRange,2,-1);
+                break;
+        }
+    }
+    // Attacker movement for some specials
+    if(w.spName==='Uppercut')attacker.vy=-7;
+    if(w.spName==='Şarj')attacker.vx=attacker.facing*12;
+    if(w.spName==='Girdap')spark(attacker.x,attacker.y-20,w.color,18,5);
+    if(w.spName==='Ezici Darbe'){spark(attacker.x+attacker.facing*25,attacker.y,'#f60',20,6);screenShake=Math.max(screenShake,14);}
+    if(w.spName==='Deprem'){
+        screenShake=Math.max(screenShake,16);
+        for(let i=0;i<30;i++){particles.push({x:attacker.x-100+Math.random()*200,y:attacker.y+28,vx:(Math.random()-0.5)*7,vy:-Math.random()*8-2,life:25+Math.random()*15,ml:40,color:'#a85',size:3+Math.random()*5})}
+    }
+    if(w.spName==='Fırtına')spark(attacker.x+attacker.facing*20,attacker.y-20,'#f6f',14,4);
+}
+
+function killFighter(f,killer){
+    f.dead=true;
+    deathBurst(f.x,f.y-15,f.color);
+    screenShake=Math.max(screenShake,12);
+    slowMo=10;
+    if(killer&&!killer.dead){
+        killer.kills++;
+        killer.hp=Math.min(killer.maxHp,killer.hp+12);
+        if(killer.isPlayer){roundKills++;totalKills++;}
+    }
+    if(f.isPlayer&&gameMode==='arena'){
+        roundDeaths++;totalDeaths++;
+        respawnQueue.push({fighter:f,timer:120});
+    }
+}
+
+// ========== PHYSICS ==========
+function updateFighter(f){
+    if(f.dead)return;
+    if(f.spCD>0)f.spCD--;
+    if(f.comboT>0){f.comboT--;if(f.comboT===0)f.combo=0;}
+    if(f.flash>0)f.flash--;
+    if(f.invuln>0)f.invuln--;
+    if(f.stun>0){f.stun--;f.vx*=0.88;}
+    else if(!f.blocking){f.vx*=f.grounded?0.72:0.95;}
+    else{f.vx*=0.55;}
+
+    if(f.atk){
+        f.atkT--;
+        if(f.atkT===Math.floor(f.atkF/2)&&!f.atkHit){
+            f.atkHit=true;
+            const w=WEAPONS[f.wIdx];
+            const mult=f.dmgMult||1;
+            for(const o of fighters){if(o!==f&&!o.dead)doHit(f,o,Math.floor(w.dmg*mult),w.range,4,-2);}
+        }
+        if(f.atkT<=0)f.atk=false;
+    }
+    if(f.spAtk){
+        f.spT--;
+        if(f.spT===Math.floor((WEAPONS[f.wIdx].speed+10)/2)&&!f.spHit){
+            f.spHit=true;
+            doSpecial(f,fighters);
+        }
+        if(f.spT<=0)f.spAtk=false;
+    }
+
+    // Gravity with terminal velocity
+    f.vy+=G;
+    if(f.vy>16)f.vy=16; // terminal velocity
+
+    // Apply velocity
+    f.x+=f.vx;
+    f.y+=f.vy;
+
+    // Platform collision (improved)
+    f.grounded=false;
+    for(const p of platforms){
+        const inX=f.x+12>p.x&&f.x-12<p.x+p.w;
+        if(!inX)continue;
+
+        // Top collision (landing on platform)
+        const prevBottom=f.y+28-f.vy;
+        if(f.y+28>=p.y&&prevBottom<=p.y+6&&f.vy>=0){
+            f.y=p.y-28;f.vy=0;f.grounded=true;f.jumpC=0;
+            continue;
+        }
+
+        // Head bump (hitting platform from below)
+        const prevTop=f.y-20-f.vy;
+        if(p!==platforms[0]&&f.y-20<=p.y+p.h&&prevTop>=p.y+p.h-4&&f.vy<0){
+            f.y=p.y+p.h+20;f.vy=1;
+            continue;
+        }
+
+        // Side collision (only ground platform)
+        if(p===platforms[0]){
+            if(f.y+28>p.y&&f.y-20<p.y+p.h){
+                if(f.y+28>p.y&&f.vy>=0){
+                    f.y=p.y-28;f.vy=0;f.grounded=true;f.jumpC=0;
+                }
+            }
+        }
+    }
+
+    // Fighter-fighter push (soft collision, prevents stacking)
+    for(const o of fighters){
+        if(o===f||o.dead)continue;
+        const dx=f.x-o.x;
+        const dy=f.y-o.y;
+        const dist=Math.sqrt(dx*dx+dy*dy);
+        if(dist<22&&dist>0){
+            const push=(22-dist)*0.3;
+            const nx=dx/dist,ny=dy/dist;
+            f.vx+=nx*push;
+            o.vx-=nx*push*0.5;
+        }
+    }
+
+    // Wall boundaries with bounce
+    if(f.x<15){f.x=15;f.vx=Math.abs(f.vx)*0.3;}
+    if(f.x>W-15){f.x=W-15;f.vx=-Math.abs(f.vx)*0.3;}
+    if(f.y>GROUND-28){f.y=GROUND-28;f.vy=0;f.grounded=true;f.jumpC=0;}
+    if(f.y<-20){f.y=-20;f.vy=1;} // ceiling
+
+    // Walk animation
+    if(f.grounded&&Math.abs(f.vx)>0.8)f.walkC+=0.15;
+    else if(f.grounded)f.walkC*=0.8; // smooth stop
+
+    // Landing dust particles
+    if(f.grounded&&f.vy===0&&!f._wasGrounded&&Math.abs(f._prevVY||0)>6){
+        spark(f.x,f.y+28,'#aa9977',4+Math.floor(Math.abs(f._prevVY||0)*0.3),2);
+    }
+    f._wasGrounded=f.grounded;
+    f._prevVY=f.vy;
+}
+
+// ========== PLAYER INPUT ==========
+function playerInput(p){
+    if(p.dead||p.stun>0)return;
+
+    if(gameMode==='pvp'){
+        // PvP: P1 uses WASD
+        p.blocking=kd('e')&&p.grounded;
+        if(p.blocking)return;
+        const spd=p.grounded?6:4;
+        if(kd('a')){p.vx=-spd;p.facing=-1;}
+        else if(kd('d')){p.vx=spd;p.facing=1;}
+        if(kp('w')&&p.jumpC<2){p.vy=p.jumpC===0?-12:-10;p.jumpC++;spark(p.x,p.y+28,'#ff4',4,2);}
+        if(kd('s')&&!p.grounded)p.vy+=0.7;
+        if(kp('q')&&!p.atk&&!p.spAtk){const w=WEAPONS[p.wIdx];p.atk=true;p.atkT=w.speed;p.atkF=w.speed;p.atkHit=false;}
+        if(kp('f')&&!p.spAtk&&!p.atk&&p.spCD===0){const w=WEAPONS[p.wIdx];p.spAtk=true;p.spT=w.speed+10;p.spHit=false;p.spCD=w.spCD;}
+        if(kp('r')){p.wIdx=(p.wIdx+1)%WEAPONS.length;spark(p.x,p.y-25,WEAPONS[p.wIdx].color,8,3);}
+    }else{
+        // Arena: solo player uses arrow keys
+        p.blocking=kd('e')&&p.grounded;
+        if(p.blocking)return;
+        const spd=p.grounded?6:4;
+        if(kd('arrowleft')){p.vx=-spd;p.facing=-1;}
+        else if(kd('arrowright')){p.vx=spd;p.facing=1;}
+        if(kp('arrowup')&&p.jumpC<2){p.vy=p.jumpC===0?-12:-10;p.jumpC++;spark(p.x,p.y+28,'#ff4',4,2);}
+        if(kd('arrowdown')&&!p.grounded)p.vy+=0.7;
+        if(kp('q')&&!p.atk&&!p.spAtk){const w=WEAPONS[p.wIdx];p.atk=true;p.atkT=w.speed;p.atkF=w.speed;p.atkHit=false;}
+        if(kp('w')&&!p.spAtk&&!p.atk&&p.spCD===0){const w=WEAPONS[p.wIdx];p.spAtk=true;p.spT=w.speed+10;p.spHit=false;p.spCD=w.spCD;}
+        if(kp('r')){p.wIdx=(p.wIdx+1)%WEAPONS.length;spark(p.x,p.y-25,WEAPONS[p.wIdx].color,8,3);}
+    }
+}
+
+function player2Input(p){
+    if(p.dead||p.stun>0)return;
+    p.blocking=kd('g')&&p.grounded;
+    if(p.blocking)return;
+
+    const spd=p.grounded?6:4;
+    if(kd('arrowleft')){p.vx=-spd;p.facing=-1;}
+    else if(kd('arrowright')){p.vx=spd;p.facing=1;}
+    if(kp('arrowup')&&p.jumpC<2){p.vy=p.jumpC===0?-12:-10;p.jumpC++;spark(p.x,p.y+28,'#f44',4,2);}
+    if(kd('arrowdown')&&!p.grounded)p.vy+=0.7;
+    if(kp('l')&&!p.atk&&!p.spAtk){const w=WEAPONS[p.wIdx];p.atk=true;p.atkT=w.speed;p.atkF=w.speed;p.atkHit=false;}
+    if(kp('k')&&!p.spAtk&&!p.atk&&p.spCD===0){const w=WEAPONS[p.wIdx];p.spAtk=true;p.spT=w.speed+10;p.spHit=false;p.spCD=w.spCD;}
+    if(kp('o')){p.wIdx=(p.wIdx+1)%WEAPONS.length;spark(p.x,p.y-25,WEAPONS[p.wIdx].color,8,3);}
+}
+
+// ========== PVP SETUP ==========
+function setupPvpRound(){
+    pvpRound++;
+    fighters=[];particles=[];screenShake=0;respawnQueue=[];
+
+    player=createFighter(300,GROUND-60,'#4af',150,player?player.wIdx:0,'P1',true);
+    player.isP1=true;
+    player2=createFighter(900,GROUND-60,'#f44',150,player2?player2.wIdx:0,'P2',true);
+    player2.isP2=true;player2.facing=-1;
+    fighters.push(player,player2);
+
+    // Add some bots for chaos
+    const botCount=Math.min(2+Math.floor(pvpRound/2),6);
+    const usedColors=['#4f8','#f6f','#ff4','#4ff','#f88','#84f'];
+    const usedNames=['Gölge','Ateş','Buz','Fırtına','Kaya','Demir'];
+    for(let i=0;i<botCount;i++){
+        const spX=200+Math.random()*(W-400);
+        const e=createFighter(spX,200,usedColors[i%6],60+pvpRound*8,Math.floor(Math.random()*WEAPONS.length),usedNames[i%6],false);
+        e.ai=createAI(Math.floor(pvpRound/2)+1);
+        e.dmgMult=0.8;
+        fighters.push(e);
+    }
+
+    announceText=`PVP RAUND ${pvpRound}/${pvpMaxRounds}`;
+    announceTimer=120;
+}
+
+// ========== DRAW HELPERS ==========
+function shadeCol(hex,amt){
+    let r=parseInt(hex.slice(1,3),16)+amt,g=parseInt(hex.slice(3,5),16)+amt,b=parseInt(hex.slice(5,7),16)+amt;
+    return`rgb(${Math.max(0,Math.min(255,r))},${Math.max(0,Math.min(255,g))},${Math.max(0,Math.min(255,b))})`;
+}
+
+function drawBG(){
+    const g=ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,'#0d0015');g.addColorStop(0.4,'#150a20');g.addColorStop(1,'#0a1525');
+    ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+
+    // Grid
+    ctx.strokeStyle='rgba(255,100,0,0.06)';ctx.lineWidth=1;
+    for(let i=0;i<W;i+=60){ctx.beginPath();ctx.moveTo(i,0);ctx.lineTo(i,H);ctx.stroke();}
+    for(let i=0;i<H;i+=60){ctx.beginPath();ctx.moveTo(0,i);ctx.lineTo(W,i);ctx.stroke();}
+
+    // Spotlights
+    const s1=ctx.createRadialGradient(300,50,0,300,50,450);
+    s1.addColorStop(0,'rgba(255,80,0,0.05)');s1.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=s1;ctx.fillRect(0,0,W,H);
+    const s2=ctx.createRadialGradient(900,50,0,900,50,450);
+    s2.addColorStop(0,'rgba(0,100,255,0.05)');s2.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=s2;ctx.fillRect(0,0,W,H);
+
+    // Crowd
+    ctx.fillStyle='rgba(30,20,40,0.85)';
+    for(let i=0;i<W;i+=17){ctx.beginPath();ctx.arc(i,82+Math.sin(i*0.5+Date.now()*0.002)*4,8,Math.PI,0);ctx.fill();}
+    for(let i=8;i<W;i+=19){ctx.beginPath();ctx.arc(i,52+Math.sin(i*0.6+Date.now()*0.003)*3,7,Math.PI,0);ctx.fill();}
+
+    // "STICKDOWN ARENA" text on wall
+    ctx.save();ctx.globalAlpha=0.06;ctx.font='bold 90px Segoe UI';ctx.textAlign='center';ctx.fillStyle='#f60';
+    ctx.fillText('STICKDOWN ARENA',600,160);ctx.restore();
+}
+
+function drawPlats(){
+    for(let i=0;i<platforms.length;i++){
+        const p=platforms[i];
+        if(i===0){
+            const gg=ctx.createLinearGradient(0,p.y,0,p.y+p.h);
+            gg.addColorStop(0,'#2a2020');gg.addColorStop(1,'#0a0505');
+            ctx.fillStyle=gg;ctx.fillRect(p.x,p.y,p.w,p.h);
+            ctx.strokeStyle='#f60';ctx.lineWidth=2;ctx.globalAlpha=0.35;
+            ctx.beginPath();ctx.moveTo(0,p.y);ctx.lineTo(W,p.y);ctx.stroke();
+            ctx.globalAlpha=1;
+            ctx.strokeStyle='rgba(255,100,0,0.12)';ctx.lineWidth=2;
+            ctx.beginPath();ctx.arc(600,p.y,80,Math.PI,0);ctx.stroke();
+        }else{
+            ctx.fillStyle='#1a1520';ctx.fillRect(p.x+3,p.y+3,p.w,p.h+6);
+            const pg=ctx.createLinearGradient(0,p.y,0,p.y+p.h);
+            pg.addColorStop(0,'#3a2a40');pg.addColorStop(1,'#2a1a30');
+            ctx.fillStyle=pg;ctx.fillRect(p.x,p.y,p.w,p.h);
+            ctx.strokeStyle='rgba(255,100,0,0.25)';ctx.lineWidth=1;ctx.strokeRect(p.x,p.y,p.w,p.h);
+        }
+    }
+    // Cage border
+    ctx.strokeStyle='rgba(255,60,0,0.15)';ctx.lineWidth=3;ctx.strokeRect(5,95,W-10,GROUND-90);
+}
+
+function drawStick(f){
+    if(f.dead)return;
+    ctx.save();ctx.translate(f.x,f.y);
+
+    // Invulnerability blink
+    if(f.invuln>0&&Math.floor(f.invuln/3)%2===0){ctx.globalAlpha=0.4;}
+
+    const fl=f.flash>0&&f.flash%2===0;
+    const col=fl?'#fff':f.color;
+    const w=WEAPONS[f.wIdx];
+
+    // Shadow
+    ctx.fillStyle='rgba(0,0,0,0.35)';ctx.beginPath();ctx.ellipse(0,30,14,5,0,0,Math.PI*2);ctx.fill();
+    ctx.shadowColor=f.color;ctx.shadowBlur=(f.isPlayer||f.isP1||f.isP2)?14:8;
+
+    const wk=Math.sin(f.walkC)*5;const ls=Math.sin(f.walkC)*8;const bob=f.grounded?wk*0.3:0;
+    ctx.strokeStyle=col;ctx.lineWidth=f.isPlayer?4:3.5;ctx.lineCap='round';
+
+    if(f.blocking){
+        ctx.beginPath();ctx.moveTo(0,5);ctx.lineTo(-7,28);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(0,5);ctx.lineTo(7,28);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(0,-14);ctx.lineTo(0,5);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(0,-10);ctx.lineTo(f.facing*12,-16);ctx.lineTo(f.facing*12,-3);ctx.stroke();
+        ctx.strokeStyle='rgba(100,180,255,0.7)';ctx.lineWidth=2;
+        ctx.beginPath();ctx.arc(f.facing*14,-8,14,-Math.PI/2,Math.PI/2);ctx.stroke();
+        ctx.fillStyle=col;ctx.beginPath();ctx.arc(0,-21,f.isPlayer?9:8,0,Math.PI*2);ctx.fill();
+        drawNameTag(f,col);ctx.restore();return;
+    }
+
+    let armA=0,wExt=0;
+    if(f.atk){const pr=1-f.atkT/f.atkF;armA=Math.sin(pr*Math.PI)*1.5;wExt=Math.sin(pr*Math.PI)*w.range*0.55;}
+    if(f.spAtk){
+        const tot=w.speed+10,pr=1-f.spT/tot;
+        if(w.spName==='Girdap'){armA=pr*Math.PI*4;wExt=w.spRange*0.45;}
+        else if(w.spName==='Uppercut'){armA=-Math.sin(pr*Math.PI)*2;wExt=Math.sin(pr*Math.PI)*35;}
+        else{armA=Math.sin(pr*Math.PI)*2;wExt=Math.sin(pr*Math.PI)*w.spRange*0.45;}
+    }
+
+    // Legs
+    if(f.grounded){
+        ctx.beginPath();ctx.moveTo(0,5);ctx.lineTo(-ls-4,28);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(0,5);ctx.lineTo(ls+4,28);ctx.stroke();
+    }else{
+        ctx.beginPath();ctx.moveTo(0,5);ctx.lineTo(-7,18);ctx.lineTo(-4,28);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(0,5);ctx.lineTo(7,18);ctx.lineTo(4,28);ctx.stroke();
+    }
+    // Body
+    ctx.beginPath();ctx.moveTo(0,-14+bob);ctx.lineTo(0,5);ctx.stroke();
+    // Back arm
+    ctx.strokeStyle=fl?'#ccc':shadeCol(f.color,-40);ctx.lineWidth=f.isPlayer?3:2.5;
+    ctx.beginPath();ctx.moveTo(0,-9+bob);ctx.lineTo(-f.facing*9,-4+bob+Math.sin(f.walkC+1)*3);ctx.stroke();
+    // Front arm
+    ctx.strokeStyle=col;ctx.lineWidth=f.isPlayer?4:3.5;
+    const ax=f.facing*9+f.facing*Math.cos(armA)*10,ay=-9+bob+Math.sin(armA)*7;
+    ctx.beginPath();ctx.moveTo(0,-9+bob);ctx.lineTo(ax,ay);ctx.stroke();
+
+    // Weapon
+    if(f.wIdx>0||f.atk||f.spAtk)drawWep(f,ax,ay,armA,wExt,w);
+
+    // Head
+    ctx.shadowBlur=f.isPlayer?18:10;ctx.fillStyle=col;
+    ctx.beginPath();ctx.arc(0,-20+bob,f.isPlayer?9:8,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#000';
+    ctx.fillRect(f.facing*2.5-1.5,-22+bob,2.5,2.5);
+    ctx.fillRect(f.facing*6-1.5,-22+bob,2.5,2.5);
+
+    // Player indicator
+    if(f.isP1||f.isP2||(f.isPlayer&&!f.isP1&&!f.isP2)){
+        ctx.shadowBlur=0;
+        ctx.fillStyle=f.isP2?'#f44':'#fd4';ctx.font='bold 10px Segoe UI';ctx.textAlign='center';
+        ctx.fillText('▼',0,-34+bob);
+    }
+
+    drawNameTag(f,col);
+    ctx.restore();
+}
+
+function drawNameTag(f,col){
+    ctx.shadowBlur=0;
+    // HP bar
+    const bw=32,bh=3;
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(-bw/2-1,-38,bw+2,bh+2);
+    ctx.fillStyle='#400';ctx.fillRect(-bw/2,-37,bw,bh);
+    const pct=f.hp/f.maxHp;
+    ctx.fillStyle=pct>0.5?'#0c0':pct>0.25?'#fa0':'#f22';
+    ctx.fillRect(-bw/2,-37,bw*pct,bh);
+
+    // Name
+    ctx.font='bold 9px Segoe UI';ctx.textAlign='center';
+    ctx.fillStyle=f.isPlayer?'#4af':'rgba(255,255,255,0.6)';
+    ctx.fillText(f.name,0,-42);
+}
+
+function drawWep(f,ax,ay,angle,ext,w){
+    ctx.save();ctx.translate(ax,ay);ctx.rotate(angle*f.facing);
+    ctx.strokeStyle=w.color;ctx.lineWidth=2.5;ctx.shadowColor=w.color;ctx.shadowBlur=5;
+    const len=12+ext;
+    switch(w.name){
+        case'Yumruk':ctx.fillStyle=w.color;ctx.beginPath();ctx.arc(f.facing*(4+ext*0.4),0,4.5,0,Math.PI*2);ctx.fill();break;
+        case'Kılıç':ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(f.facing*len,-2.5);ctx.lineTo(f.facing*(len+4),0);ctx.lineTo(f.facing*len,2.5);ctx.closePath();ctx.fillStyle=w.color;ctx.fill();ctx.fillStyle='#fd4';ctx.fillRect(-2.5,-4,5,8);break;
+        case'Balta':ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(f.facing*len*0.65,0);ctx.stroke();ctx.fillStyle='#c40';ctx.beginPath();ctx.moveTo(f.facing*len*0.55,-10);ctx.lineTo(f.facing*len*0.85,-4);ctx.lineTo(f.facing*len*0.85,4);ctx.lineTo(f.facing*len*0.55,10);ctx.lineTo(f.facing*len*0.5,0);ctx.fill();break;
+        case'Mızrak':ctx.beginPath();ctx.moveTo(-f.facing*8,0);ctx.lineTo(f.facing*len,0);ctx.stroke();ctx.fillStyle='#4f4';ctx.beginPath();ctx.moveTo(f.facing*len,0);ctx.lineTo(f.facing*(len-8),-4);ctx.lineTo(f.facing*(len-8),4);ctx.fill();break;
+        case'Çekiç':ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(f.facing*len*0.65,0);ctx.stroke();ctx.fillStyle='#888';ctx.fillRect(f.facing*len*0.5-5,-9,14,18);ctx.fillStyle='#fa0';ctx.fillRect(f.facing*len*0.5-3,-7,10,14);break;
+        case'Nunçaku':ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(f.facing*10,4);ctx.stroke();ctx.strokeStyle='#f8f';ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(f.facing*10,4);ctx.lineTo(f.facing*(10+ext*0.3),4+Math.sin(Date.now()*0.02)*7);ctx.stroke();ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(f.facing*(10+ext*0.3),4+Math.sin(Date.now()*0.02)*7);ctx.lineTo(f.facing*(18+ext*0.5),Math.sin(Date.now()*0.03)*9);ctx.stroke();break;
+    }
+    ctx.shadowBlur=0;ctx.restore();
+}
+
+function drawParticles(){
+    for(const p of particles){
+        const a=p.life/p.ml;ctx.globalAlpha=a;
+        if(p.text){ctx.font='bold 16px Segoe UI';ctx.fillStyle=p.color;ctx.textAlign='center';ctx.fillText(p.text,p.x,p.y);}
+        else if(p.trail){ctx.strokeStyle=p.color;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(p.x-p.vx*3,p.y-p.vy*3);ctx.stroke();}
+        else{ctx.fillStyle=p.color;ctx.fillRect(p.x-p.size/2,p.y-p.size/2,p.size,p.size);}
+    }
+    ctx.globalAlpha=1;
+}
+
+function drawHUD(){
+    if(!player)return;
+
+    // Player HP
+    ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(20,15,304,28);
+    ctx.fillStyle='#222';ctx.fillRect(22,17,300,24);
+    const pct=player.dead?0:player.hp/player.maxHp;
+    const hg=ctx.createLinearGradient(22,0,322,0);
+    hg.addColorStop(0,pct>0.3?'#26f':'#f22');hg.addColorStop(1,pct>0.3?'#4af':'#f64');
+    ctx.fillStyle=hg;ctx.fillRect(22,17,300*pct,24);
+    ctx.font='bold 13px Segoe UI';ctx.fillStyle='#fff';ctx.textAlign='left';
+    ctx.fillText(player.dead?'ÖLÜM - Respawn bekleniyor...': `HP: ${player.hp}/${player.maxHp}`,28,34);
+
+    // Weapon
+    if(!player.dead){
+        const cw=WEAPONS[player.wIdx];
+        ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(20,50,220,22);
+        ctx.fillStyle=cw.color;ctx.font='bold 12px Segoe UI';
+        ctx.fillText(`${cw.icon} ${cw.name}  |  Özel: ${cw.spName}`,28,66);
+        if(player.spCD>0){
+            ctx.fillStyle='rgba(255,255,255,0.2)';ctx.fillRect(22,76,100,3);
+            ctx.fillStyle='#fa0';ctx.fillRect(22,76,100*(1-player.spCD/cw.spCD),3);
+        }else{
+            ctx.fillStyle='#0f0';ctx.font='10px Segoe UI';ctx.fillText('● ÖZEL HAZIR [W]',22,86);
+        }
+    }
+
+    // Round & difficulty
+    let diffLabel='',diffCol='#4f4';
+    if(roundNum<=2){diffLabel='KOLAY';diffCol='#4f4';}
+    else if(roundNum<=4){diffLabel='NORMAL';diffCol='#fa0';}
+    else if(roundNum<=6){diffLabel='ZOR';diffCol='#f60';}
+    else if(roundNum<=8){diffLabel='ÇOK ZOR';diffCol='#f22';}
+    else{diffLabel='CEHENNEM';diffCol='#f0f';}
+    ctx.textAlign='right';ctx.font='bold 16px Segoe UI';ctx.fillStyle=diffCol;
+    ctx.fillText(`RAUND ${roundNum} — ${diffLabel}`,W-25,32);
+
+    // Alive count
+    const alive=fighters.filter(f=>!f.dead);
+    ctx.fillStyle='#f44';ctx.font='bold 13px Segoe UI';
+    ctx.fillText(`Hayatta: ${alive.length}/${fighters.length}`,W-25,52);
+
+    // Stats panel
+    ctx.textAlign='left';
+    const px=W-185,py=62;
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(px,py,175,82);
+    ctx.strokeStyle='rgba(255,255,255,0.08)';ctx.lineWidth=1;ctx.strokeRect(px,py,175,82);
+
+    ctx.font='bold 11px Segoe UI';ctx.fillStyle='#888';
+    ctx.fillText('BU RAUND',px+8,py+14);
+    ctx.fillStyle='#4f4';ctx.font='11px Segoe UI';
+    ctx.fillText(`Kill: ${roundKills}`,px+8,py+30);
+    ctx.fillStyle='#f44';
+    ctx.fillText(`Ölüm: ${roundDeaths}`,px+70,py+30);
+
+    ctx.font='bold 11px Segoe UI';ctx.fillStyle='#888';
+    ctx.fillText('TOPLAM',px+8,py+48);
+    ctx.fillStyle='#4f4';ctx.font='11px Segoe UI';
+    ctx.fillText(`Kill: ${totalKills}`,px+8,py+64);
+    ctx.fillStyle='#f44';
+    ctx.fillText(`Ölüm: ${totalDeaths}`,px+70,py+64);
+    const kd2=totalDeaths>0?(totalKills/totalDeaths).toFixed(1):'∞';
+    ctx.fillStyle='#fa0';
+    ctx.fillText(`K/D: ${kd2}`,px+130,py+64);
+
+    // Scoreboard - top killers
+    ctx.font='bold 11px Segoe UI';
+    const sorted=[...fighters].sort((a,b)=>b.kills-a.kills).slice(0,5);
+    const sbY=py+90;
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(px,sbY,175,sorted.length*18+8);
+    ctx.fillStyle='#888';ctx.fillText('SKOR TABLOSU',px+8,sbY+14);
+    for(let i=0;i<sorted.length;i++){
+        const s=sorted[i];
+        ctx.fillStyle=s.isPlayer?'#4af':s.dead?'#555':s.color;
+        ctx.font=s.isPlayer?'bold 11px Segoe UI':'11px Segoe UI';
+        ctx.fillText(`${s.name}: ${s.kills} kill${s.dead?' (ölü)':''}`,px+8,sbY+30+i*18);
+    }
+
+    // Combo
+    if(!player.dead&&player.combo>1){
+        ctx.textAlign='center';ctx.font='bold 24px Segoe UI';ctx.fillStyle='#fd4';
+        ctx.fillText(`${player.combo}x KOMBO!`,600,120);
+    }
+
+    // Announce
+    if(announceTimer>0){
+        ctx.textAlign='center';ctx.font='bold 48px Segoe UI';
+        ctx.globalAlpha=Math.min(1,announceTimer/30);
+        ctx.fillStyle='#f80';ctx.shadowColor='#f80';ctx.shadowBlur=20;
+        ctx.fillText(announceText,600,280);
+        ctx.shadowBlur=0;ctx.globalAlpha=1;
+    }
+
+    // Controls
+    ctx.textAlign='center';ctx.font='11px Segoe UI';ctx.fillStyle='rgba(255,255,255,0.2)';
+    ctx.fillText('Ok Tuşları: Hareket  |  Q: Saldırı  |  W: Özel  |  R: Silah Değiştir  |  E: Savunma',600,H-10);
+}
+
+// ========== MENU ==========
+function drawMenu(){
+    drawBG();drawPlats();
+
+    const t=Date.now()*0.001;
+    // Demo stickmen fighting
+    ctx.save();
+    for(let i=0;i<6;i++){
+        const dx=120+i*180;const dy=GROUND-28+Math.sin(t+i)*4;
+        ctx.translate(dx,dy);
+        ctx.strokeStyle=BOT_COLORS[i];ctx.lineWidth=3;ctx.lineCap='round';
+        ctx.beginPath();ctx.moveTo(0,-14);ctx.lineTo(0,5);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(0,5);ctx.lineTo(-5+Math.sin(t*2+i)*5,28);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(0,5);ctx.lineTo(5-Math.sin(t*2+i)*5,28);ctx.stroke();
+        const facing=i%2===0?1:-1;
+        ctx.beginPath();ctx.moveTo(0,-8);ctx.lineTo(facing*(8+Math.cos(t*4+i)*12),-5+Math.sin(t*3+i)*6);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(0,-8);ctx.lineTo(-facing*8,-4+Math.sin(t*2+i)*4);ctx.stroke();
+        ctx.fillStyle=ctx.strokeStyle;ctx.beginPath();ctx.arc(0,-20,7,0,Math.PI*2);ctx.fill();
+        ctx.translate(-dx,-dy);
+    }
+    ctx.restore();
+
+    ctx.textAlign='center';
+    ctx.font='bold 82px Segoe UI';ctx.fillStyle='#f60';ctx.shadowColor='#f60';ctx.shadowBlur=30;
+    ctx.fillText('STICKDOWN',600,260);ctx.shadowBlur=0;
+    ctx.font='bold 26px Segoe UI';ctx.fillStyle='#fa0';
+    ctx.fillText('A R E N A',600,300);
+    ctx.font='16px Segoe UI';ctx.fillStyle='#888';
+    ctx.fillText('Herkes herkese karşı! Son ayakta kalan kazanır!',600,340);
+
+    // Mode selection
+    ctx.font='bold 28px Segoe UI';
+    const pulse=0.7+Math.sin(t*3)*0.3;
+
+    // Arena button
+    ctx.fillStyle=menuSel===0?'#f80':'#666';
+    ctx.globalAlpha=menuSel===0?1:0.6;
+    ctx.fillText('[ 1 ] ARENA MODU',600,410);
+
+    // PvP button
+    ctx.fillStyle=menuSel===1?'#f44':'#666';
+    ctx.globalAlpha=menuSel===1?1:0.6;
+    ctx.fillText('[ 2 ] PVP MODU',600,455);
+    ctx.globalAlpha=1;
+
+    ctx.globalAlpha=pulse;ctx.font='bold 18px Segoe UI';ctx.fillStyle='#fff';
+    ctx.fillText('Seçtikten sonra ENTER\'a bas',600,500);ctx.globalAlpha=1;
+
+    ctx.font='12px Segoe UI';ctx.fillStyle='#555';
+    ctx.fillText('Arena: Ok Tuşları + Q/W/E/R  |  PvP: P1=WASD+Q/W/E/R — P2=Ok Tuşları+L/K/G/O',600,540);
+    ctx.fillText('Botlar da birbirleriyle savaşır! PvP\'de arkadaşınla aynı klavyede dövüş!',600,565);
+}
+
+function drawWeaponSelect(){
+    ctx.fillStyle='rgba(0,0,0,0.85)';ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';ctx.font='bold 38px Segoe UI';ctx.fillStyle='#f80';
+    ctx.fillText('SİLAH SEÇ',600,80);
+
+    for(let i=0;i<WEAPONS.length;i++){
+        const wx=80+(i%3)*380;const wy=110+Math.floor(i/3)*240;const w=WEAPONS[i];
+        const sel=player&&player.wIdx===i;
+        ctx.fillStyle=sel?'rgba(255,100,0,0.25)':'rgba(20,15,30,0.9)';
+        ctx.strokeStyle=sel?'#f80':'#333';ctx.lineWidth=sel?3:1;
+        ctx.fillRect(wx,wy,340,200);ctx.strokeRect(wx,wy,340,200);
+
+        ctx.font='bold 26px Segoe UI';ctx.fillStyle=w.color;ctx.textAlign='center';
+        ctx.fillText(`${w.icon} ${w.name}`,wx+170,wy+38);
+
+        ctx.font='13px Segoe UI';ctx.fillStyle='#aaa';
+        ctx.fillText(`Hasar: ${w.dmg}  |  Menzil: ${w.range}  |  Hız: ${11-Math.floor(w.speed/3)}/10`,wx+170,wy+65);
+        ctx.fillStyle='#888';
+        ctx.fillText(`Özel: ${w.spName} (Hasar: ${w.spDmg})`,wx+170,wy+88);
+
+        const stats=[{n:'Hasar',v:w.dmg/20},{n:'Menzil',v:w.range/120},{n:'Hız',v:1-w.speed/28}];
+        for(let s=0;s<stats.length;s++){
+            ctx.textAlign='left';ctx.font='11px Segoe UI';ctx.fillStyle='#666';
+            ctx.fillText(stats[s].n,wx+20,wy+115+s*20);
+            ctx.fillStyle='#222';ctx.fillRect(wx+75,wy+107+s*20,220,10);
+            ctx.fillStyle=w.color;ctx.fillRect(wx+75,wy+107+s*20,220*Math.min(1,stats[s].v),10);
+        }
+        ctx.textAlign='center';ctx.font='bold 14px Segoe UI';ctx.fillStyle=sel?'#fa0':'#444';
+        ctx.fillText(`[ ${i+1} ]`,wx+170,wy+192);
+    }
+    ctx.textAlign='center';ctx.font='15px Segoe UI';ctx.fillStyle='#aaa';
+    ctx.fillText('Numara tuşuyla (1-6) seç, ENTER ile arenaya gir!',600,600);
+}
+
+function drawPvpWeaponSelect(){
+    ctx.fillStyle='rgba(0,0,0,0.88)';ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';ctx.font='bold 34px Segoe UI';ctx.fillStyle='#f80';
+    ctx.fillText('PVP — SİLAH SEÇ',600,55);
+
+    ctx.font='16px Segoe UI';ctx.fillStyle='#4af';
+    ctx.fillText('P1: Numara tuşları (1-6) ile seç',300,85);
+    ctx.fillStyle='#f44';
+    ctx.fillText('P2: Raund içinde O ile değiştir',900,85);
+
+    for(let i=0;i<WEAPONS.length;i++){
+        const wx=80+(i%3)*380;const wy=100+Math.floor(i/3)*200;const w=WEAPONS[i];
+        const selP1=player&&player.wIdx===i;
+        const selP2=player2&&player2.wIdx===i;
+        ctx.fillStyle=selP1?'rgba(68,136,255,0.25)':selP2?'rgba(255,68,68,0.2)':'rgba(20,15,30,0.9)';
+        ctx.strokeStyle=selP1?'#4af':selP2?'#f44':'#333';ctx.lineWidth=selP1||selP2?3:1;
+        ctx.fillRect(wx,wy,340,165);ctx.strokeRect(wx,wy,340,165);
+
+        ctx.font='bold 24px Segoe UI';ctx.fillStyle=w.color;ctx.textAlign='center';
+        ctx.fillText(`${w.icon} ${w.name}`,wx+170,wy+32);
+        ctx.font='12px Segoe UI';ctx.fillStyle='#aaa';
+        ctx.fillText(`Hasar:${w.dmg} Menzil:${w.range} | Özel:${w.spName}`,wx+170,wy+55);
+
+        const stats=[{n:'Hasar',v:w.dmg/20},{n:'Menzil',v:w.range/120},{n:'Hız',v:1-w.speed/28}];
+        for(let s=0;s<stats.length;s++){
+            ctx.textAlign='left';ctx.font='10px Segoe UI';ctx.fillStyle='#666';
+            ctx.fillText(stats[s].n,wx+18,wy+78+s*18);
+            ctx.fillStyle='#222';ctx.fillRect(wx+65,wy+70+s*18,230,8);
+            ctx.fillStyle=w.color;ctx.fillRect(wx+65,wy+70+s*18,230*Math.min(1,stats[s].v),8);
+        }
+        ctx.textAlign='center';ctx.font='bold 13px Segoe UI';
+        ctx.fillStyle=selP1?'#4af':selP2?'#f44':'#444';
+        const label=selP1?'◄ P1':selP2?'P2 ►':`[ ${i+1} ]`;
+        ctx.fillText(label,wx+170,wy+155);
+    }
+    ctx.textAlign='center';ctx.font='15px Segoe UI';ctx.fillStyle='#aaa';
+    ctx.fillText('P1: 1-6 ile seç  |  ENTER ile başla!',600,520);
+}
+
+function drawRoundEnd(){
+    ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+
+    // Winner
+    const winner=fighters.find(f=>!f.dead);
+    if(winner){
+        ctx.font='bold 56px Segoe UI';
+        ctx.fillStyle=winner.color;ctx.shadowColor=winner.color;ctx.shadowBlur=20;
+        ctx.fillText(winner.isPlayer?'KAZANDIN!': `${winner.name} KAZANDI!`,600,260);
+        ctx.shadowBlur=0;
+    }
+
+    // Round stats
+    ctx.font='18px Segoe UI';ctx.fillStyle='#aaa';
+    ctx.fillText('— Bu Raund —',600,310);
+    ctx.font='bold 20px Segoe UI';
+    ctx.fillStyle='#4f4';ctx.fillText(`Kill: ${roundKills}`,480,340);
+    ctx.fillStyle='#f44';ctx.fillText(`Ölüm: ${roundDeaths}`,600,340);
+    const rkd=roundDeaths>0?(roundKills/roundDeaths).toFixed(1):'∞';
+    ctx.fillStyle='#fa0';ctx.fillText(`K/D: ${rkd}`,720,340);
+
+    ctx.font='14px Segoe UI';ctx.fillStyle='#888';
+    ctx.fillText(`Toplam — Kill: ${totalKills}  |  Ölüm: ${totalDeaths}  |  K/D: ${totalDeaths>0?(totalKills/totalDeaths).toFixed(1):'∞'}`,600,370);
+
+    // Final scoreboard
+    const sorted=[...fighters].sort((a,b)=>b.kills-a.kills);
+    ctx.font='14px Segoe UI';
+    for(let i=0;i<Math.min(sorted.length,8);i++){
+        const s=sorted[i];
+        ctx.fillStyle=s.isPlayer?'#4af':s.color;
+        ctx.fillText(`${i+1}. ${s.name} — ${s.kills} kill`,600,405+i*22);
+    }
+
+    const pulse=0.7+Math.sin(Date.now()*0.003)*0.3;ctx.globalAlpha=pulse;
+    ctx.font='bold 22px Segoe UI';ctx.fillStyle='#fff';
+    ctx.fillText('Sonraki raund için ENTER',600,560);ctx.globalAlpha=1;
+}
+
+// ========== PVP HUD ==========
+function drawPvpHUD(){
+    // P1 HP (left)
+    ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(20,15,304,28);
+    ctx.fillStyle='#222';ctx.fillRect(22,17,300,24);
+    const p1pct=player.dead?0:player.hp/player.maxHp;
+    const h1=ctx.createLinearGradient(22,0,322,0);
+    h1.addColorStop(0,'#26f');h1.addColorStop(1,'#4af');
+    ctx.fillStyle=h1;ctx.fillRect(22,17,300*p1pct,24);
+    ctx.font='bold 13px Segoe UI';ctx.fillStyle='#fff';ctx.textAlign='left';
+    ctx.fillText(`P1: ${player.dead?'ÖLÜM':player.hp+'/'+player.maxHp}  [${WEAPONS[player.wIdx].name}]`,28,34);
+
+    // P2 HP (right)
+    ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(W-324,15,304,28);
+    ctx.fillStyle='#222';ctx.fillRect(W-322,17,300,24);
+    const p2pct=player2.dead?0:player2.hp/player2.maxHp;
+    const h2=ctx.createLinearGradient(W-322,0,W-22,0);
+    h2.addColorStop(0,'#f44');h2.addColorStop(1,'#f88');
+    ctx.fillStyle=h2;ctx.fillRect(W-322,17,300*p2pct,24);
+    ctx.textAlign='right';
+    ctx.fillText(`[${WEAPONS[player2.wIdx].name}]  ${player2.dead?'ÖLÜM':player2.hp+'/'+player2.maxHp} :P2`,W-28,34);
+
+    // Score
+    ctx.textAlign='center';ctx.font='bold 32px Segoe UI';ctx.fillStyle='#fff';
+    ctx.fillText(`${pvpScore[0]}  -  ${pvpScore[1]}`,600,38);
+    ctx.font='14px Segoe UI';ctx.fillStyle='#888';
+    ctx.fillText(`Raund ${pvpRound}/${pvpMaxRounds}`,600,58);
+
+    // P1 cooldown
+    ctx.textAlign='left';
+    if(player.spCD>0){ctx.fillStyle='rgba(255,255,255,0.2)';ctx.fillRect(22,48,100,3);ctx.fillStyle='#fa0';ctx.fillRect(22,48,100*(1-player.spCD/WEAPONS[player.wIdx].spCD),3);}
+    else if(!player.dead){ctx.fillStyle='#0f0';ctx.font='10px Segoe UI';ctx.fillText('● ÖZEL [F]',22,56);}
+    // P2 cooldown
+    ctx.textAlign='right';
+    if(player2.spCD>0){ctx.fillStyle='rgba(255,255,255,0.2)';ctx.fillRect(W-122,48,100,3);ctx.fillStyle='#fa0';ctx.fillRect(W-122,48,100*(1-player2.spCD/WEAPONS[player2.wIdx].spCD),3);}
+    else if(!player2.dead){ctx.fillStyle='#0f0';ctx.font='10px Segoe UI';ctx.fillText('ÖZEL [K] ●',W-22,56);}
+
+    // Alive bots
+    const aliveBots=fighters.filter(f=>!f.dead&&!f.isPlayer&&!f.isP1&&!f.isP2).length;
+    if(aliveBots>0){ctx.textAlign='center';ctx.font='12px Segoe UI';ctx.fillStyle='#888';ctx.fillText(`Botlar: ${aliveBots}`,600,75);}
+
+    // Kill counts
+    ctx.textAlign='left';ctx.font='11px Segoe UI';ctx.fillStyle='#4af';
+    ctx.fillText(`Kill: ${player.kills}`,22,70);
+    ctx.textAlign='right';ctx.fillStyle='#f44';
+    ctx.fillText(`Kill: ${player2.kills}`,W-22,70);
+
+    // Controls
+    ctx.textAlign='center';ctx.font='11px Segoe UI';ctx.fillStyle='rgba(255,255,255,0.2)';
+    ctx.fillText('P1: WASD+Q(saldırı)+F(özel)+R(silah)+E(savunma)  |  P2: Ok Tuşları+L(saldırı)+K(özel)+O(silah)+G(savunma)',600,H-10);
+}
+
+function drawPvpRoundEnd(){
+    ctx.fillStyle='rgba(0,0,0,0.75)';ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+
+    // Who won this round
+    const p1alive=!player.dead,p2alive=!player2.dead;
+    let roundWinner='';
+    if(p1alive&&!p2alive){roundWinner='P1';ctx.fillStyle='#4af';}
+    else if(p2alive&&!p1alive){roundWinner='P2';ctx.fillStyle='#f44';}
+    else{
+        // Both dead or both alive - check HP
+        if(player.hp>player2.hp){roundWinner='P1';ctx.fillStyle='#4af';}
+        else if(player2.hp>player.hp){roundWinner='P2';ctx.fillStyle='#f44';}
+        else{roundWinner='BERABERE';ctx.fillStyle='#fff';}
+    }
+
+    ctx.font='bold 52px Segoe UI';ctx.shadowColor=ctx.fillStyle;ctx.shadowBlur=20;
+    ctx.fillText(roundWinner==='BERABERE'?'BERABERE!':`${roundWinner} KAZANDI!`,600,240);
+    ctx.shadowBlur=0;
+
+    // Score
+    ctx.font='bold 36px Segoe UI';ctx.fillStyle='#fff';
+    ctx.fillText(`${pvpScore[0]}  -  ${pvpScore[1]}`,600,300);
+
+    // Kill stats
+    ctx.font='18px Segoe UI';
+    ctx.fillStyle='#4af';ctx.fillText(`P1 Kill: ${player.kills}`,450,350);
+    ctx.fillStyle='#f44';ctx.fillText(`P2 Kill: ${player2.kills}`,750,350);
+
+    // Match over?
+    if(pvpRound>=pvpMaxRounds){
+        ctx.font='bold 28px Segoe UI';
+        if(pvpScore[0]>pvpScore[1]){ctx.fillStyle='#4af';ctx.fillText('P1 MAÇ KAZANDI!',600,410);}
+        else if(pvpScore[1]>pvpScore[0]){ctx.fillStyle='#f44';ctx.fillText('P2 MAÇ KAZANDI!',600,410);}
+        else{ctx.fillStyle='#fa0';ctx.fillText('MAÇ BERABERE!',600,410);}
+        ctx.font='18px Segoe UI';ctx.fillStyle='#aaa';
+        ctx.fillText('Ana menü için ENTER',600,460);
+    }else{
+        const pulse2=0.7+Math.sin(Date.now()*0.003)*0.3;ctx.globalAlpha=pulse2;
+        ctx.font='bold 22px Segoe UI';ctx.fillStyle='#fff';
+        ctx.fillText('Sonraki raund için ENTER',600,420);ctx.globalAlpha=1;
+    }
+}
+
+// ========== MAIN LOOP ==========
+function update(){
+    if(gameState==='menu'){
+        if(kp('1'))menuSel=0;
+        if(kp('2'))menuSel=1;
+        if(kp('enter')){
+            if(menuSel===0){
+                gameMode='arena';
+                gameState='weaponSelect';
+                player=createFighter(600,200,'#4af',120,0,'SEN',true);
+            }else{
+                gameMode='pvp';
+                gameState='pvpWeaponSelect';
+                player=createFighter(300,200,'#4af',150,0,'P1',true);
+                player.isP1=true;
+                player2=createFighter(900,200,'#f44',150,0,'P2',true);
+                player2.isP2=true;
+            }
+        }
+    }else if(gameState==='weaponSelect'){
+        for(let i=0;i<6;i++){if(kp(''+(i+1)))player.wIdx=i;}
+        if(kp('enter')){gameState='playing';roundNum=0;player.kills=0;totalKills=0;totalDeaths=0;setupRound();}
+    }else if(gameState==='pvpWeaponSelect'){
+        // P1 selects with 1-6, P2 selects with numpad or displayed
+        for(let i=0;i<6;i++){if(kp(''+(i+1))){player.wIdx=i;}}
+        if(kp('enter')){
+            gameState='pvpPlaying';pvpRound=0;pvpScore=[0,0];
+            player.kills=0;player2.kills=0;
+            setupPvpRound();
+        }
+    }else if(gameState==='playing'){
+        if(announceTimer>0)announceTimer--;
+        if(!player.dead)playerInput(player);
+        for(const f of fighters)updateFighter(f);
+        for(const f of fighters){if(f.ai&&!f.dead)aiUpdate(f);}
+
+        // Respawn queue
+        for(let i=respawnQueue.length-1;i>=0;i--){
+            respawnQueue[i].timer--;
+            if(respawnQueue[i].timer<=0){
+                const f=respawnQueue[i].fighter;
+                f.dead=false;f.hp=f.maxHp;f.stun=0;
+                f.x=200+Math.random()*(W-400);f.y=200;f.vx=0;f.vy=0;
+                f.invuln=90;
+                spark(f.x,f.y,'#fff',15,5);
+                respawnQueue.splice(i,1);
+            }
+        }
+
+        const alive=fighters.filter(f=>!f.dead);
+        const pendingRespawn=respawnQueue.length>0;
+        if(alive.length<=1&&!pendingRespawn){
+            gameState='roundEnd';
+            if(alive.length===1&&alive[0].isPlayer)playerWins++;
+        }
+    }else if(gameState==='roundEnd'){
+        if(kp('enter')){
+            const savedKills=player.kills;
+            const savedWIdx=player.wIdx;
+            gameState='playing';
+            setupRound();
+            player.kills=savedKills;
+            player.wIdx=savedWIdx;
+        }
+    }else if(gameState==='pvpPlaying'){
+        if(announceTimer>0)announceTimer--;
+        if(!player.dead)playerInput(player);
+        if(!player2.dead)player2Input(player2);
+        for(const f of fighters)updateFighter(f);
+        for(const f of fighters){if(f.ai&&!f.dead)aiUpdate(f);}
+
+        // Check: both players dead or only bots remain
+        const p1d=player.dead,p2d=player2.dead;
+        const botsAlive=fighters.filter(f=>!f.dead&&!f.isP1&&!f.isP2).length;
+        if((p1d&&p2d)||(p1d&&botsAlive===0)||(p2d&&botsAlive===0)||(botsAlive===0&&fighters.filter(f=>!f.dead).length<=1)){
+            // Determine round winner
+            if(!p1d&&p2d)pvpScore[0]++;
+            else if(!p2d&&p1d)pvpScore[1]++;
+            else if(!p1d&&!p2d){if(player.hp>=player2.hp)pvpScore[0]++;else pvpScore[1]++;}
+            gameState='pvpRoundEnd';
+        }
+    }else if(gameState==='pvpRoundEnd'){
+        if(kp('enter')){
+            if(pvpRound>=pvpMaxRounds){
+                gameState='menu';menuSel=1;
+            }else{
+                const w1=player.wIdx,w2=player2.wIdx,k1=player.kills,k2=player2.kills;
+                gameState='pvpPlaying';
+                setupPvpRound();
+                player.wIdx=w1;player2.wIdx=w2;
+                player.kills=k1;player2.kills=k2;
+            }
+        }
+    }
+
+    // Particles
+    for(let i=particles.length-1;i>=0;i--){
+        const p=particles[i];p.x+=p.vx;p.y+=p.vy;
+        if(!p.text){p.vy+=0.12;p.vx*=0.98;}else{p.vy*=0.95;}
+        p.life--;if(p.life<=0)particles.splice(i,1);
+    }
+    if(screenShake>0){screenShake*=0.82;if(screenShake<0.5)screenShake=0;}
+    if(slowMo>0)slowMo--;
+}
+
+function draw(){
+    ctx.clearRect(0,0,W,H);
+    ctx.save();
+    if(screenShake>0)ctx.translate((Math.random()-0.5)*screenShake*2,(Math.random()-0.5)*screenShake*2);
+
+    if(gameState==='menu'){drawMenu();}
+    else if(gameState==='weaponSelect'){drawBG();drawPlats();drawWeaponSelect();}
+    else if(gameState==='pvpWeaponSelect'){drawBG();drawPlats();drawPvpWeaponSelect();}
+    else if(gameState==='playing'){
+        drawBG();drawPlats();drawParticles();
+        for(const f of fighters){if(!f.isPlayer)drawStick(f);}
+        drawStick(player);
+        drawHUD();
+    }else if(gameState==='roundEnd'){
+        drawBG();drawPlats();drawParticles();
+        for(const f of fighters)drawStick(f);
+        drawRoundEnd();
+    }else if(gameState==='pvpPlaying'){
+        drawBG();drawPlats();drawParticles();
+        for(const f of fighters){if(!f.isP1&&!f.isP2)drawStick(f);}
+        drawStick(player);drawStick(player2);
+        drawPvpHUD();
+    }else if(gameState==='pvpRoundEnd'){
+        drawBG();drawPlats();drawParticles();
+        for(const f of fighters)drawStick(f);
+        drawPvpRoundEnd();
+    }
+
+    ctx.restore();
+}
+
+function loop(){
+    if(slowMo>0&&gameState==='playing'){if(Date.now()%3!==0){draw();for(const k in jp)delete jp[k];requestAnimationFrame(loop);return;}}
+    update();draw();
+    for(const k in jp)delete jp[k];
+    requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
