@@ -561,12 +561,30 @@ function localSpecialCheck() {
 function updateFighter(f) {
     if (f.dead) return;
 
-    // Remote players: direkt pozisyon ata, gecikme yok
+    // Remote players: velocity prediction + snap correction
     if (!f.isLocal && !f.isBot) {
         if (f._targetX !== undefined) {
-            f.x = f._targetX;
-            f.y = f._targetY;
+            // Hedefle fark varsa düzelt, yoksa hızla tahmin yap
+            const dx = f._targetX - f.x, dy = f._targetY - f.y;
+            if (Math.abs(dx) > 100 || Math.abs(dy) > 100) {
+                // Çok uzaksa snap
+                f.x = f._targetX; f.y = f._targetY;
+            } else {
+                // Hızla ilerle + hedefe doğru düzelt
+                f.x += f.vx + dx * 0.3;
+                f.y += f.vy + dy * 0.3;
+            }
         }
+        // Fizik uygula (yerçekimi, zemin)
+        f.vy += GV;
+        if (f.vy > 16) f.vy = 16;
+        f.grounded = false;
+        for (const p of platforms) {
+            if (f.x + 12 > p.x && f.x - 12 < p.x + p.w && f.y + 28 >= p.y && f.y + 28 < p.y + p.h + 10 && f.vy >= 0) {
+                f.y = p.y - 28; f.vy = 0; f.grounded = true;
+            }
+        }
+        if (f.y > GROUND - 28) { f.y = GROUND - 28; f.vy = 0; f.grounded = true; }
         if (f.flash > 0) f.flash--;
         if (f.stun > 0) f.stun--;
         return;
