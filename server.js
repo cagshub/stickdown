@@ -123,8 +123,7 @@ io.on('connection', (socket) => {
 
         io.to(currentRoom).emit('gameStart', {
             players: playerData,
-            roundNum: room.roundNum,
-            botCount: room.botCount
+            roundNum: room.roundNum
         });
         console.log(`Room ${currentRoom} game started (round ${room.roundNum})`);
     });

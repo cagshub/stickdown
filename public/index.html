@@ -305,6 +305,7 @@ let botFighters = [];
 let roundInfo = {};
 let gameOverTimer = 0;
 let gameOverText = '';
+let gameOverWinnerColor = '#f80';
 const KILL_LIMIT = 10;
 let respawnQueue = [];
 
@@ -353,7 +354,7 @@ function startOnlineGame(data) {
     gameOverText = '';
     roundInfo = data;
 
-    // Create all player fighters
+    // Create only real players - no bots
     data.players.forEach(p => {
         const f = createFighter(p.spawnX, p.spawnY, p.color, 150, p.weaponIdx, p.name, p.id === myId);
         f.netId = p.id;
@@ -364,18 +365,6 @@ function startOnlineGame(data) {
             remotePlayers[p.id] = f;
         }
     });
-
-    // Create bots (host manages, others just render)
-    const botNames = ['Gölge', 'Ateş', 'Buz', 'Fırtına', 'Kaya', 'Demir'];
-    const botColors = ['#888', '#aa6', '#6a8', '#a6a', '#8a6', '#6aa'];
-    for (let i = 0; i < (data.botCount || 0); i++) {
-        const b = createFighter(200 + Math.random() * 800, 200, botColors[i % 6], 80, Math.floor(Math.random() * 6), botNames[i % 6], false);
-        b.isBot = true;
-        b.ai = createAI(2);
-        b.netId = 'bot_' + i;
-        fighters.push(b);
-        botFighters.push(b);
-    }
 }
 
 // ========== NETWORK STATE SYNC ==========
@@ -404,22 +393,6 @@ function sendState() {
         kills: localPlayer.kills
     });
 
-    // Host sends bot states
-    if (isHost) {
-        botFighters.forEach(b => {
-            if (b.dead) return;
-            socket.emit('state', {
-                id: b.netId,
-                x: Math.round(b.x), y: Math.round(b.y),
-                vx: +(b.vx.toFixed(1)), vy: +(b.vy.toFixed(1)),
-                facing: b.facing, hp: b.hp, wIdx: b.wIdx,
-                atk: b.atk, atkT: b.atkT, atkF: b.atkF,
-                spAtk: b.spAtk, spT: b.spT,
-                blocking: b.blocking, dead: b.dead,
-                walkC: +(b.walkC.toFixed(2)), grounded: b.grounded, kills: b.kills
-            });
-        });
-    }
 }
 
 // Receive remote state
@@ -481,7 +454,7 @@ socket.on('hit', data => {
         if (attacker) attacker.kills++;
         // Respawn queue
         if (!target.isBot) {
-            respawnQueue.push({ fighter: target, timer: 90 }); // 1.5 saniye
+            respawnQueue.push({ fighter: target, timer: 60 }); // 1 saniye
         }
         if (target.isLocal) socket.emit('died', { killerId: data.attackerId });
     }
@@ -496,7 +469,7 @@ socket.on('playerDied', data => {
         const killer = fighters.find(ff => ff.netId === data.killerId);
         if (killer) killer.kills++;
         if (!f.isBot) {
-            respawnQueue.push({ fighter: f, timer: 90 });
+            respawnQueue.push({ fighter: f, timer: 60 });
         }
     }
 });
@@ -937,15 +910,41 @@ function drawHUD() {
     ctx.textAlign = 'center'; ctx.font = '11px Segoe UI'; ctx.fillStyle = 'rgba(255,255,255,0.2)';
     ctx.fillText('Ok Tuşları: Hareket | Q: Saldırı | W: Özel | R: Silah | E: Savunma', 500, H - 10);
 
-    // Game over
-    if (gameOverTimer > 0) {
-        ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 250, W, 150);
-        ctx.textAlign = 'center'; ctx.font = 'bold 48px Segoe UI'; ctx.fillStyle = '#f80';
-        ctx.shadowColor = '#f80'; ctx.shadowBlur = 20;
-        ctx.fillText(gameOverText, 600, 310);
+    // Game over screen
+    if (gameOverTimer !== 0) {
+        ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(0, 180, W, 340);
+        ctx.textAlign = 'center';
+
+        // Winner name
+        ctx.font = 'bold 56px Segoe UI'; ctx.fillStyle = gameOverWinnerColor;
+        ctx.shadowColor = gameOverWinnerColor; ctx.shadowBlur = 25;
+        ctx.fillText(`${gameOverText} KAZANDI!`, 600, 270);
         ctx.shadowBlur = 0;
-        ctx.font = '20px Segoe UI'; ctx.fillStyle = '#aaa';
-        ctx.fillText(isHost ? 'Host: lobiye dönmek için ESC' : 'Host lobiye döndürecek...', 600, 360);
+
+        // Scoreboard
+        const sorted = [...fighters].sort((a, b) => b.kills - a.kills);
+        ctx.font = 'bold 14px Segoe UI'; ctx.fillStyle = '#888';
+        ctx.fillText('SKOR TABLOSU', 600, 310);
+        sorted.forEach((f, i) => {
+            ctx.font = i === 0 ? 'bold 18px Segoe UI' : '15px Segoe UI';
+            ctx.fillStyle = f.color;
+            ctx.fillText(`${i + 1}. ${f.name} — ${f.kills} kill`, 600, 340 + i * 26);
+        });
+
+        // Restart / lobby
+        const bottomY = 350 + sorted.length * 26;
+        if (isHost) {
+            const pulse = 0.7 + Math.sin(Date.now() * 0.004) * 0.3;
+            ctx.globalAlpha = pulse;
+            ctx.font = 'bold 22px Segoe UI'; ctx.fillStyle = '#4f4';
+            ctx.fillText('ENTER: Yeniden Başlat', 600, bottomY);
+            ctx.fillStyle = '#f44'; ctx.font = '16px Segoe UI';
+            ctx.fillText('ESC: Lobiye Dön', 600, bottomY + 30);
+            ctx.globalAlpha = 1;
+        } else {
+            ctx.font = '18px Segoe UI'; ctx.fillStyle = '#888';
+            ctx.fillText('Host yeniden başlatacak...', 600, bottomY);
+        }
     }
 }
 
@@ -955,14 +954,8 @@ function gameUpdate() {
 
     handleInput();
 
-    // Update local + bots
-    fighters.forEach(f => {
-        if (f.isLocal || (f.isBot && isHost)) updateFighter(f);
-        else updateFighter(f); // remote: just interpolate
-    });
-
-    // Bot AI (host only)
-    if (isHost) botFighters.forEach(b => { if (!b.dead) aiUpdate(b); });
+    // Update all fighters
+    fighters.forEach(f => updateFighter(f));
 
     sendState();
 
@@ -997,19 +990,20 @@ function gameUpdate() {
 
     // Check game end: first to KILL_LIMIT kills wins
     if (gameOverTimer === 0) {
-        const winner = fighters.find(f => f.kills >= KILL_LIMIT && !f.isBot);
+        const winner = fighters.find(f => f.kills >= KILL_LIMIT);
         if (winner) {
-            gameOverText = `${winner.name} KAZANDI! (${winner.kills} kill)`;
-            gameOverTimer = 240;
+            gameOverText = winner.name;
+            gameOverWinnerColor = winner.color;
+            gameOverTimer = -1; // -1 = permanent until restart
         }
     }
-    if (gameOverTimer > 0) {
-        gameOverTimer--;
-        if (gameOverTimer <= 0 && isHost) {
-            socket.emit('roundEnd');
+    // Host can restart or go to lobby
+    if (gameOverTimer === -1) {
+        if (jp['enter'] && isHost) {
+            socket.emit('startGame'); // restart
         }
-        if (keys['escape'] && isHost && gameOverTimer < 180) {
-            gameOverTimer = 1;
+        if (jp['escape'] && isHost) {
+            socket.emit('roundEnd'); // lobby
         }
     }
 
